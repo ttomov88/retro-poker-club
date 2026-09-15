@@ -726,6 +726,54 @@
     });
   }
 
+  document.getElementById("btn-edit-player-name").addEventListener("click", async () => {
+    const player = await DB.get("players", state.currentPlayerId);
+    if (!player) return;
+    openModal(`
+      <h2>Edit name</h2>
+      <div class="field">
+        <label for="f-pname-edit">Name</label>
+        <input type="text" id="f-pname-edit" value="${escapeHtml(player.name)}">
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="m-cancel">Cancel</button>
+        <button class="btn btn-gold" id="m-save">Save</button>
+      </div>
+    `);
+    const input = document.getElementById("f-pname-edit");
+    setTimeout(() => {
+      input.focus();
+      input.select();
+    }, 50);
+    document.getElementById("m-cancel").addEventListener("click", closeModal);
+    document.getElementById("m-save").addEventListener("click", async () => {
+      const newName = input.value.trim();
+      if (!newName) {
+        toast("Enter a name");
+        return;
+      }
+      player.name = newName;
+      await DB.put("players", player);
+
+      // Keep historical event records in sync with the new name
+      const allNights = await DB.getAll("nights");
+      for (const night of allNights) {
+        let changed = false;
+        (night.players || []).forEach((np) => {
+          if (np.playerId === player.id && np.name !== newName) {
+            np.name = newName;
+            changed = true;
+          }
+        });
+        if (changed) await DB.put("nights", night);
+      }
+
+      closeModal();
+      renderPlayerDetail(state.currentPlayerId);
+      toast("Name updated");
+    });
+  });
+
   document.getElementById("btn-delete-player").addEventListener("click", async () => {
     if (!confirm("Remove this player from the roster? Past event results stay in history.")) return;
     await DB.delete("players", state.currentPlayerId);
