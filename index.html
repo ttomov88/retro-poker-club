@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<title>Retro Poker Club</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<meta name="theme-color" content="#FAF8F4">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ===== Header ===== -->
+  <header class="hdr">
+    <div class="hdr-top">
+      <button class="brand" id="btn-brand-home" aria-label="Go to Events">
+        <span class="brand-mark">&#9824;</span>
+        <span class="brand-name">Retro Poker Club</span>
+      </button>
+      <button class="icon-btn" id="btn-open-settings" aria-label="Settings and export">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 8.5A3.5 3.5 0 1 0 12 15.5 3.5 3.5 0 0 0 12 8.5zm8.9 3.9-1.6-.9c.05-.33.08-.66.08-1s-.03-.67-.08-1l1.6-.9a.6.6 0 0 0 .24-.79l-1.6-2.77a.6.6 0 0 0-.75-.26l-1.7.68a7.4 7.4 0 0 0-1.73-1l-.26-1.8a.6.6 0 0 0-.6-.51h-3.2a.6.6 0 0 0-.6.51l-.26 1.8c-.63.24-1.21.58-1.73 1l-1.7-.68a.6.6 0 0 0-.75.26L2.66 7.8a.6.6 0 0 0 .24.79l1.6.9c-.05.33-.08.66-.08 1s.03.67.08 1l-1.6.9a.6.6 0 0 0-.24.79l1.6 2.77c.16.28.5.39.79.26l1.7-.68c.52.42 1.1.76 1.73 1l.26 1.8c.05.3.3.51.6.51h3.2c.3 0 .55-.21.6-.51l.26-1.8c.63-.24 1.21-.58 1.73-1l1.7.68c.29.13.63.02.79-.26l1.6-2.77a.6.6 0 0 0-.24-.79z"/></svg>
+      </button>
+    </div>
+    <div class="pot-strip" id="pot-strip" hidden>
+      <span class="pot-strip-label">Live pot &mdash; <span id="pot-strip-night"></span></span>
+      <span class="pot-strip-amount" id="pot-strip-amount">&euro;0.00</span>
+    </div>
+  </header>
+
+  <!-- ===== Main views ===== -->
+  <main id="views">
+
+    <!-- ---- Nights list ---- -->
+    <section class="view" id="view-nights" data-view="nights">
+      <div class="view-head">
+        <h1>Events</h1>
+        <button class="btn btn-gold" id="btn-new-night">New Event</button>
+      </div>
+      <div id="nights-list" class="stack"></div>
+      <p class="empty-msg" id="nights-empty" hidden>No events yet. Start one when the cards come out.</p>
+    </section>
+
+    <!-- ---- Night detail (open) ---- -->
+    <section class="view" id="view-night-detail" data-view="night-detail">
+      <div class="view-head view-head-back">
+        <button class="btn-back" aria-label="Back">&#8592;</button>
+        <div class="view-head-title">
+          <h1 id="nd-date">&nbsp;</h1>
+          <span class="badge" id="nd-status">Open</span>
+        </div>
+      </div>
+
+      <div class="pot-hero" id="nd-pot-hero">
+        <span class="pot-hero-label">Total buy-ins</span>
+        <span class="pot-hero-amount" id="nd-pot-amount">&euro;0.00</span>
+      </div>
+
+      <div class="section-row">
+        <h2>Players</h2>
+        <button class="btn btn-ghost-gold btn-sm" id="btn-add-player-to-night">Add player</button>
+      </div>
+      <div id="nd-players" class="stack"></div>
+      <p class="empty-msg" id="nd-players-empty" hidden>No players yet. Add who's at the table.</p>
+
+      <div id="nd-open-actions" class="sticky-actions">
+        <button class="btn btn-gold btn-block" id="btn-close-night">Close event</button>
+      </div>
+
+      <!-- ---- Closed summary ---- -->
+      <div id="nd-closed-summary" hidden>
+        <div class="section-row"><h2>Results</h2></div>
+        <div id="nd-results" class="stack"></div>
+        <button class="btn btn-ghost btn-block" id="btn-reopen-night">Reopen event</button>
+      </div>
+    </section>
+
+    <!-- ---- Close-out screen ---- -->
+    <section class="view" id="view-closeout" data-view="closeout">
+      <div class="view-head view-head-back">
+        <button class="btn-back" data-back="night-detail" aria-label="Back">&#8592;</button>
+        <div class="view-head-title">
+          <h1>Close the event</h1>
+        </div>
+      </div>
+      <p class="hint-text">Enter each player's cash-out, or type their net win/loss directly &mdash; either way works per player.</p>
+      <div id="closeout-list" class="stack"></div>
+      <div class="closeout-check" id="closeout-check"></div>
+      <div class="sticky-actions">
+        <button class="btn btn-gold btn-block" id="btn-finish-night">Finish event</button>
+      </div>
+    </section>
+
+    <!-- ---- Players (roster + stats) ---- -->
+    <section class="view" id="view-players" data-view="players">
+      <div class="view-head">
+        <h1>Players</h1>
+        <button class="btn btn-gold" id="btn-add-player">Add player</button>
+      </div>
+      <div id="players-list" class="stack"></div>
+      <p class="empty-msg" id="players-empty" hidden>No players in the roster yet.</p>
+    </section>
+
+    <!-- ---- Player detail ---- -->
+    <section class="view" id="view-player-detail" data-view="player-detail">
+      <div class="view-head view-head-back">
+        <button class="btn-back" data-back="players" aria-label="Back to players">&#8592;</button>
+        <div class="view-head-title">
+          <h1 id="pd-name">&nbsp;</h1>
+        </div>
+      </div>
+      <div class="stat-grid" id="pd-stats"></div>
+      <div class="section-row"><h2>Events played</h2></div>
+      <div id="pd-nights" class="stack"></div>
+      <p class="empty-msg" id="pd-nights-empty" hidden>Hasn't played an event yet.</p>
+      <button class="btn btn-ghost btn-block" id="btn-delete-player">Remove from roster</button>
+    </section>
+
+    <!-- ---- Chips ---- -->
+    <section class="view" id="view-chips" data-view="chips">
+      <div class="view-head">
+        <h1>Chips</h1>
+        <button class="btn btn-gold" id="btn-add-chip">Add chip</button>
+      </div>
+      <div class="pot-hero pot-hero-sm">
+        <span class="pot-hero-label">Total chip inventory value</span>
+        <span class="pot-hero-amount" id="chips-total-value">&euro;0.00</span>
+      </div>
+      <p class="hint-text">Reference only &mdash; buy-ins are still entered in euros.</p>
+      <div id="chips-list" class="stack"></div>
+      <p class="empty-msg" id="chips-empty" hidden>No chip denominations set up yet.</p>
+    </section>
+
+    <!-- ---- Settings / export ---- -->
+    <section class="view" id="view-settings" data-view="settings">
+      <div class="view-head view-head-back">
+        <button class="btn-back" aria-label="Back">&#8592;</button>
+        <div class="view-head-title"><h1>Settings &amp; backup</h1></div>
+      </div>
+
+      <div class="settings-block">
+        <h2>Export</h2>
+        <p class="hint-text">Save a full backup of every event, player, and chip setting as a JSON file.</p>
+        <button class="btn btn-gold btn-block" id="btn-export">Export data now</button>
+      </div>
+
+      <div class="settings-block">
+        <h2>Import</h2>
+        <p class="hint-text">Restore from a previously exported file. This replaces everything currently stored on this device.</p>
+        <button class="btn btn-ghost btn-block" id="btn-import">Choose backup file&hellip;</button>
+        <input type="file" id="import-file" accept="application/json" hidden>
+      </div>
+
+      <div class="settings-block">
+        <h2>Auto-backup</h2>
+        <p class="hint-text" id="autobackup-status">A backup file is saved to your Downloads folder automatically whenever an event is closed.</p>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ===== Bottom nav ===== -->
+  <nav class="tabbar" id="tabbar">
+    <button class="tab-btn is-active" data-tab="nights" aria-label="Events">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M12 2 3 7v10l9 5 9-5V7l-9-5zm0 2.2 6.8 3.8L12 11.8 5.2 8 12 4.2zM5 9.9l6 3.4v6.9l-6-3.3V9.9zm8 10.3v-6.9l6-3.4v6.6l-6 3.7z"/></svg>
+      <span>Events</span>
+    </button>
+    <button class="tab-btn" data-tab="players" aria-label="Players">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+      <span>Players</span>
+    </button>
+    <button class="tab-btn" data-tab="chips" aria-label="Chips">
+      <svg viewBox="0 0 24 24" width="22" height="22"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 3v2.4M12 18.6V21M21 12h-2.4M5.4 12H3" stroke="currentColor" stroke-width="1.6"/></svg>
+      <span>Chips</span>
+    </button>
+  </nav>
+
+</div>
+
+<div class="modal-backdrop" id="modal-backdrop" hidden>
+  <div class="modal" id="modal-root"></div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="db.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
