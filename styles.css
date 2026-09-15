@@ -311,25 +311,9 @@ main#views {
 .player-actions { display: flex; gap: 8px; margin-top: 10px; }
 
 /* ============ Close-out rows ============ */
-.closeout-row .toggle-group {
-  display: flex;
-  gap: 6px;
-  margin-top: 10px;
-}
-.toggle-btn {
-  flex: 1;
-  padding: 8px;
-  font-size: 12.5px;
-  font-weight: 600;
-  border: 1px solid var(--navy-line);
-  border-radius: var(--radius-s);
-  color: var(--steel);
-}
-.toggle-btn.is-active { border-color: var(--gold); color: var(--gold-light); background: rgba(188,157,88,0.12); }
-
-.closeout-row .field-row { margin-top: 10px; display: flex; align-items: center; gap: 8px; }
+.closeout-row .field-row { margin-top: 10px; display: flex; align-items: center; gap: 8px; min-width: 0; }
 .closeout-row .field-row label { font-size: 13px; color: var(--steel); width: 72px; flex-shrink: 0; }
-.closeout-row input { flex: 1; }
+.closeout-row input { flex: 1; min-width: 0; width: 100%; }
 
 .closeout-check {
   margin-top: 16px;

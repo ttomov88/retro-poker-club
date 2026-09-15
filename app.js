@@ -10,7 +10,6 @@
     currentPlayerId: null,
     nightDetailReturnTo: "nights", // 'nights' | 'player-detail'
     settingsReturnTab: "nights",
-    closeoutModes: {}, // playerId -> 'cashout' | 'net'  (session-only, per open closeout screen)
   };
 
   // ---------------- Helpers ----------------
@@ -460,45 +459,25 @@
 
   // ================= CLOSEOUT =================
   function renderCloseout(night) {
-    state.closeoutModes = {};
     const wrap = document.getElementById("closeout-list");
     wrap.innerHTML = "";
 
     night.players.forEach((np) => {
       const total = buyinTotal(np);
-      state.closeoutModes[np.playerId] = "cashout";
       const row = el(`
         <div class="card closeout-row" data-pid="${np.playerId}">
           <div class="card-row">
             <div class="card-title">${escapeHtml(np.name)}</div>
             <div class="card-sub">Buy-in ${fmtMoney(total)}</div>
           </div>
-          <div class="toggle-group">
-            <button type="button" class="toggle-btn is-active" data-mode="cashout">Cash-out</button>
-            <button type="button" class="toggle-btn" data-mode="net">Net win/loss</button>
-          </div>
           <div class="field-row">
-            <label id="lbl-${np.playerId}">Cash-out</label>
+            <label>Cash-out</label>
             <input type="number" inputmode="decimal" step="0.01" class="amount-input" id="in-${np.playerId}" placeholder="0.00">
           </div>
         </div>
       `);
 
-      const labelEl = row.querySelector(`#lbl-${CSS.escape(String(np.playerId))}`);
-      const inputEl = row.querySelector(`#in-${CSS.escape(String(np.playerId))}`);
-
-      row.querySelectorAll(".toggle-btn").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          row.querySelectorAll(".toggle-btn").forEach((b) => b.classList.remove("is-active"));
-          btn.classList.add("is-active");
-          const mode = btn.dataset.mode;
-          state.closeoutModes[np.playerId] = mode;
-          labelEl.textContent = mode === "cashout" ? "Cash-out" : "Net";
-          inputEl.value = "";
-          updateCloseoutCheck(night);
-        });
-      });
-
+      const inputEl = row.querySelector(`#in-${np.playerId}`);
       inputEl.addEventListener("input", () => updateCloseoutCheck(night));
 
       wrap.appendChild(row);
@@ -510,19 +489,13 @@
   function readCloseoutRows(night) {
     return night.players.map((np) => {
       const total = buyinTotal(np);
-      const mode = state.closeoutModes[np.playerId] || "cashout";
-      const raw = document.getElementById(`in-${CSS.escape(String(np.playerId))}`);
+      const raw = document.getElementById(`in-${np.playerId}`);
       const val = raw && raw.value !== "" ? round2(parseFloat(raw.value)) : null;
       let cashOut = null;
       let net = null;
       if (val !== null && !isNaN(val)) {
-        if (mode === "cashout") {
-          cashOut = val;
-          net = round2(cashOut - total);
-        } else {
-          net = val;
-          cashOut = round2(total + net);
-        }
+        cashOut = val;
+        net = round2(cashOut - total);
       }
       return { playerId: np.playerId, name: np.name, total, cashOut, net };
     });
