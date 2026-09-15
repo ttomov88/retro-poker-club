@@ -511,6 +511,21 @@
     updatePotStrip();
   });
 
+  document.getElementById("btn-delete-night").addEventListener("click", async () => {
+    if (!confirm("Delete this event permanently? Buy-ins and results will be lost. This can't be undone.")) return;
+    await DB.delete("nights", state.currentNightId);
+    state.currentNightId = null;
+    if (state.nightDetailReturnTo === "player-detail") {
+      showView("player-detail");
+      renderPlayerDetail(state.currentPlayerId);
+    } else {
+      showView("nights");
+      renderNightsList();
+    }
+    updatePotStrip();
+    toast("Event deleted");
+  });
+
   // ================= CLOSEOUT =================
   function renderCloseout(night) {
     const wrap = document.getElementById("closeout-list");
@@ -644,6 +659,12 @@
     };
   }
 
+  async function confirmDeletePlayer(playerId) {
+    if (!confirm("Remove this player from the roster? Past event results stay in history.")) return false;
+    await DB.delete("players", playerId);
+    return true;
+  }
+
   async function renderPlayersList() {
     const roster = await DB.getAll("players");
     const list = document.getElementById("players-list");
@@ -664,7 +685,12 @@
               <div class="card-title">${escapeHtml(p.name)}</div>
               <div class="card-sub">${stats.nightsPlayed} event${stats.nightsPlayed === 1 ? "" : "s"} played</div>
             </div>
-            <div class="money ${amountClass(stats.net)}">${fmtSigned(stats.net)}</div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <div class="money ${amountClass(stats.net)}">${fmtSigned(stats.net)}</div>
+              <button type="button" class="icon-btn icon-btn-sm btn-roster-delete" aria-label="Remove ${escapeHtml(p.name)} from roster">
+                <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M6 7h12l-1 13.5a1.5 1.5 0 0 1-1.5 1.5h-7a1.5 1.5 0 0 1-1.5-1.5L6 7zm3-3h6l1 2H8l1-2zM4 7h16" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
+              </button>
+            </div>
           </div>
         </div>
       `);
@@ -672,6 +698,12 @@
         state.currentPlayerId = p.id;
         showView("player-detail");
         renderPlayerDetail(p.id);
+      });
+      card.querySelector(".btn-roster-delete").addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const ok = await confirmDeletePlayer(p.id);
+        if (!ok) return;
+        renderPlayersList();
       });
       list.appendChild(card);
     });
@@ -802,8 +834,8 @@
   });
 
   document.getElementById("btn-delete-player").addEventListener("click", async () => {
-    if (!confirm("Remove this player from the roster? Past event results stay in history.")) return;
-    await DB.delete("players", state.currentPlayerId);
+    const ok = await confirmDeletePlayer(state.currentPlayerId);
+    if (!ok) return;
     showView("players");
     renderPlayersList();
   });

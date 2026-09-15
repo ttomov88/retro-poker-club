@@ -141,6 +141,8 @@ main#views {
   color: var(--steel);
 }
 .icon-btn:active { background: var(--navy-card); color: var(--gold-light); }
+.icon-btn-sm { width: 28px; height: 28px; }
+.icon-btn-sm:active { color: var(--loss); }
 
 .pot-strip {
   display: flex;
