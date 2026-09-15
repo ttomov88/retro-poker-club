@@ -301,7 +301,7 @@
     players.forEach((np) => {
       const total = buyinTotal(np);
       const chips = (np.buyins || [])
-        .map((b) => `<span class="buyin-chip">${fmtMoney(b.amount)}</span>`)
+        .map((b, i) => `<button type="button" class="buyin-chip" data-idx="${i}">${fmtMoney(b.amount)}</button>`)
         .join("");
       const row = el(`
         <div class="card player-row">
@@ -317,6 +317,10 @@
         </div>
       `);
       row.querySelector(".btn-add-buyin").addEventListener("click", () => openBuyinModal(night.id, np.playerId));
+      row.querySelectorAll(".buyin-chip").forEach((chipEl) => {
+        const idx = Number(chipEl.dataset.idx);
+        chipEl.addEventListener("click", () => openEditBuyinModal(night.id, np.playerId, idx));
+      });
       row.querySelector(".btn-remove-player").addEventListener("click", async () => {
         if (!confirm(`Remove ${np.name} from this event? Their buy-ins will be removed too.`)) return;
         const fresh = await DB.get("nights", night.id);
@@ -373,6 +377,56 @@
       np.buyins = np.buyins || [];
       np.buyins.push({ amount, ts: Date.now() });
       await DB.put("nights", night);
+      closeModal();
+      renderNightDetail(nightId);
+      updatePotStrip();
+    });
+  }
+
+  async function openEditBuyinModal(nightId, playerId, buyinIndex) {
+    const night = await DB.get("nights", nightId);
+    const np = night.players.find((p) => p.playerId === playerId);
+    const buyin = np && np.buyins ? np.buyins[buyinIndex] : null;
+    if (!buyin) return;
+
+    openModal(`
+      <h2>Edit buy-in</h2>
+      <div class="field">
+        <label for="f-edit-amount">Amount (EUR)</label>
+        <input type="number" id="f-edit-amount" inputmode="decimal" step="0.01" min="0" class="amount-input" value="${buyin.amount}">
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost btn-danger-text" id="m-delete">Delete</button>
+        <button class="btn btn-gold" id="m-save">Save</button>
+      </div>
+    `);
+    const input = document.getElementById("f-edit-amount");
+    setTimeout(() => {
+      input.focus();
+      input.select();
+    }, 50);
+
+    document.getElementById("m-delete").addEventListener("click", async () => {
+      if (!confirm("Delete this buy-in?")) return;
+      const fresh = await DB.get("nights", nightId);
+      const freshNp = fresh.players.find((p) => p.playerId === playerId);
+      freshNp.buyins.splice(buyinIndex, 1);
+      await DB.put("nights", fresh);
+      closeModal();
+      renderNightDetail(nightId);
+      updatePotStrip();
+    });
+
+    document.getElementById("m-save").addEventListener("click", async () => {
+      const amount = round2(parseFloat(input.value));
+      if (!amount || amount <= 0) {
+        toast("Enter an amount above zero");
+        return;
+      }
+      const fresh = await DB.get("nights", nightId);
+      const freshNp = fresh.players.find((p) => p.playerId === playerId);
+      freshNp.buyins[buyinIndex].amount = amount;
+      await DB.put("nights", fresh);
       closeModal();
       renderNightDetail(nightId);
       updatePotStrip();
@@ -929,6 +983,26 @@
       navigator.serviceWorker.register("sw.js").catch((err) => console.error("SW registration failed", err));
     });
   }
+
+  // ================= Exit confirmation =================
+  // Covers two cases a web app CAN intercept:
+  //  1) the in-app back gesture / hardware back button (via history + popstate)
+  //  2) closing the browser tab (via beforeunload)
+  // It cannot cover swiping an installed PWA away in Android's task switcher —
+  // that's an OS-level app-close action no web page can hook into, same as it
+  // would be for a native app being force-closed.
+  history.pushState({ rpcGuard: true }, "", location.href);
+  window.addEventListener("popstate", () => {
+    if (confirm("Close Retro Poker Club?")) {
+      history.back();
+    } else {
+      history.pushState({ rpcGuard: true }, "", location.href);
+    }
+  });
+  window.addEventListener("beforeunload", (e) => {
+    e.preventDefault();
+    e.returnValue = "";
+  });
 
   // ================= Init =================
   async function init() {

@@ -306,7 +306,9 @@ main#views {
   color: var(--steel);
   border-radius: 20px;
   padding: 3px 9px;
+  cursor: pointer;
 }
+.buyin-chip:active { border-color: var(--gold); color: var(--gold-light); }
 
 .player-actions { display: flex; gap: 8px; margin-top: 10px; }
 
