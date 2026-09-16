@@ -743,7 +743,7 @@
     const stats = await computePlayerStats(playerId);
 
     const statCards = [
-      ["Nights played", stats.nightsPlayed, ""],
+      ["Events played", stats.nightsPlayed, ""],
       ["Net profit/loss", fmtSigned(stats.net), amountClass(stats.net)],
       ["Total buy-in", fmtMoney(stats.totalBuyIn), ""],
       ["Total cash-out", fmtMoney(stats.totalCashOut), ""],
