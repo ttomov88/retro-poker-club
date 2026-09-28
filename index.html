@@ -30,7 +30,7 @@
     </div>
     <div class="pot-strip" id="pot-strip" hidden>
       <span class="pot-strip-label">Live pot &mdash; <span id="pot-strip-night"></span></span>
-      <span class="pot-strip-amount" id="pot-strip-amount">&euro;0.00</span>
+      <span class="pot-strip-amount" id="pot-strip-amount"></span>
     </div>
   </header>
 
@@ -59,7 +59,7 @@
 
       <div class="pot-hero" id="nd-pot-hero">
         <span class="pot-hero-label">Total buy-ins</span>
-        <span class="pot-hero-amount" id="nd-pot-amount">&euro;0.00</span>
+        <span class="pot-hero-amount" id="nd-pot-amount"></span>
       </div>
 
       <div class="section-row">
@@ -135,7 +135,7 @@
       </div>
       <div class="pot-hero pot-hero-sm">
         <span class="pot-hero-label">Total chip inventory value</span>
-        <span class="pot-hero-amount" id="chips-total-value">&euro;0.00</span>
+        <span class="pot-hero-amount" id="chips-total-value"></span>
       </div>
       <div id="chips-list" class="stack"></div>
       <p class="empty-msg" id="chips-empty" hidden>No chip denominations set up yet.</p>
@@ -146,6 +146,19 @@
       <div class="view-head view-head-back">
         <button class="btn-back" aria-label="Back">&#8592;</button>
         <div class="view-head-title"><h1>Settings &amp; backup</h1></div>
+      </div>
+
+      <div class="settings-block">
+        <h2>Currency preferences</h2>
+        <div class="field" style="margin-top: 10px;">
+          <label for="f-currency-symbol">Symbol</label>
+          <input type="text" id="f-currency-symbol" placeholder="e.g. €, $, £, CHF">
+        </div>
+        <div class="field">
+          <label for="f-currency-code">Code</label>
+          <input type="text" id="f-currency-code" placeholder="e.g. EUR, USD, GBP, CHF">
+        </div>
+        <button class="btn btn-gold btn-block" id="btn-save-currency" style="margin-top: 8px;">Save currency settings</button>
       </div>
 
       <div class="settings-block">
@@ -176,7 +189,7 @@
       <span>Events</span>
     </button>
     <button class="tab-btn" data-tab="players" aria-label="Players">
-      <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+      <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
       <span>Players</span>
     </button>
     <button class="tab-btn" data-tab="chips" aria-label="Chips">

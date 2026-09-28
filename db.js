@@ -1,7 +1,7 @@
 /* Retro Poker Club — IndexedDB layer */
 
 const DB_NAME = "RetroPokerClubDB";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let _dbPromise = null;
 
@@ -19,6 +19,9 @@ function openDB() {
       }
       if (!db.objectStoreNames.contains("chips")) {
         db.createObjectStore("chips", { keyPath: "id", autoIncrement: true });
+      }
+      if (!db.objectStoreNames.contains("settings")) {
+        db.createObjectStore("settings", { keyPath: "key" });
       }
     };
     req.onsuccess = (e) => resolve(e.target.result);
@@ -89,11 +92,12 @@ const DB = {
 
   async clearAll() {
     const db = await openDB();
-    const names = ["players", "nights", "chips"];
+    const names = ["players", "nights", "chips", "settings"];
     await Promise.all(
       names.map(
         (name) =>
           new Promise((resolve, reject) => {
+            if (!db.objectStoreNames.contains(name)) return resolve();
             const req = db.transaction(name, "readwrite").objectStore(name).clear();
             req.onsuccess = () => resolve();
             req.onerror = () => reject(req.error);
@@ -103,18 +107,20 @@ const DB = {
   },
 
   async exportAll() {
-    const [players, nights, chips] = await Promise.all([
+    const [players, nights, chips, settings] = await Promise.all([
       DB.getAll("players"),
       DB.getAll("nights"),
       DB.getAll("chips"),
+      DB.getAll("settings"),
     ]);
     return {
       app: "retro-poker-club",
-      version: 1,
+      version: 2,
       exportedAt: new Date().toISOString(),
       players,
       nights,
       chips,
+      settings,
     };
   },
 
@@ -125,6 +131,7 @@ const DB = {
     await DB.clearAll();
     const db = await openDB();
     async function putAll(storeName, rows) {
+      if (!db.objectStoreNames.contains(storeName)) return;
       const store = db.transaction(storeName, "readwrite").objectStore(storeName);
       for (const row of rows) {
         store.put(row);
@@ -133,6 +140,7 @@ const DB = {
     await putAll("players", data.players);
     await putAll("nights", data.nights);
     await putAll("chips", data.chips || []);
+    await putAll("settings", data.settings || []);
   },
 };
 
