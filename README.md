@@ -11,10 +11,11 @@ A personal-use, offline-first PWA for tracking private poker events: buy-ins (wi
 
 ## Data & backups
 
-- All data is stored locally on your device (IndexedDB). Nothing is sent anywhere.
-- A JSON backup file is automatically downloaded to your Downloads folder every time you close an event.
-- You can export a backup anytime, or restore from one, under the settings (gear icon, top right).
-- Clearing Chrome's site data/browsing data will wipe the app's storage — keep your backup files somewhere safe.
+- All data is stored locally on your phone (IndexedDB). Nothing is sent anywhere.
+- Auto-backup (on by default, toggle in Backup): a JSON file is saved to your Downloads folder every time you close an event.
+- The app asks Chrome for persistent storage, so the data isn't evicted when the phone runs low on space.
+- Clearing Chrome's "Cookies and site data" still wipes the app's data. If the app opens empty, it offers a one-tap restore from your latest backup file in Downloads.
+- Safe way to clear Chrome: in Delete browsing data → Advanced, untick "Cookies and site data".
 
 ## Notes
 

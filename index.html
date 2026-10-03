@@ -24,13 +24,13 @@
         <span class="brand-mark">&#9824;</span>
         <span class="brand-name">Retro Poker Club</span>
       </button>
-      <button class="icon-btn" id="btn-open-settings" aria-label="Settings and export">
+      <button class="icon-btn" id="btn-open-settings" aria-label="Backup">
         <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 8.5A3.5 3.5 0 1 0 12 15.5 3.5 3.5 0 0 0 12 8.5zm8.9 3.9-1.6-.9c.05-.33.08-.66.08-1s-.03-.67-.08-1l1.6-.9a.6.6 0 0 0 .24-.79l-1.6-2.77a.6.6 0 0 0-.75-.26l-1.7.68a7.4 7.4 0 0 0-1.73-1l-.26-1.8a.6.6 0 0 0-.6-.51h-3.2a.6.6 0 0 0-.6.51l-.26 1.8c-.63.24-1.21.58-1.73 1l-1.7-.68a.6.6 0 0 0-.75.26L2.66 7.8a.6.6 0 0 0 .24.79l1.6.9c-.05.33-.08.66-.08 1s.03.67.08 1l-1.6.9a.6.6 0 0 0-.24.79l1.6 2.77c.16.28.5.39.79.26l1.7-.68c.52.42 1.1.76 1.73 1l.26 1.8c.05.3.3.51.6.51h3.2c.3 0 .55-.21.6-.51l.26-1.8c.63-.24 1.21-.58 1.73-1l1.7.68c.29.13.63.02.79-.26l1.6-2.77a.6.6 0 0 0-.24-.79z"/></svg>
       </button>
     </div>
-    <div class="pot-strip" id="pot-strip" hidden>
+    <div class="pot-strip" id="pot-strip" role="button" tabindex="0" aria-label="Open the live event" hidden>
       <span class="pot-strip-label">Live pot &mdash; <span id="pot-strip-night"></span></span>
-      <span class="pot-strip-amount" id="pot-strip-amount"></span>
+      <span class="pot-strip-amount" id="pot-strip-amount">&euro;0.00</span>
     </div>
   </header>
 
@@ -57,9 +57,11 @@
         </div>
       </div>
 
+      <p class="hint-text event-notes" id="nd-notes" hidden></p>
+
       <div class="pot-hero" id="nd-pot-hero">
         <span class="pot-hero-label">Total buy-ins</span>
-        <span class="pot-hero-amount" id="nd-pot-amount"></span>
+        <span class="pot-hero-amount" id="nd-pot-amount">&euro;0.00</span>
       </div>
 
       <div class="section-row">
@@ -77,16 +79,16 @@
       <div id="nd-closed-summary" hidden>
         <div class="section-row"><h2>Results</h2></div>
         <div id="nd-results" class="stack"></div>
-        <button class="btn btn-ghost btn-block" id="btn-reopen-night" style="margin-top:14px">Reopen event</button>
+        <button class="btn btn-ghost btn-block section-actions" id="btn-reopen-night">Reopen event</button>
       </div>
 
-      <button class="btn btn-ghost btn-block btn-danger-text" id="btn-delete-night" style="margin-top:14px">Delete event</button>
+      <button class="btn btn-ghost btn-block btn-danger-text section-actions" id="btn-delete-night">Delete event</button>
     </section>
 
     <!-- ---- Close-out screen ---- -->
     <section class="view" id="view-closeout" data-view="closeout">
       <div class="view-head view-head-back">
-        <button class="btn-back" data-back="night-detail" aria-label="Back">&#8592;</button>
+        <button class="btn-back" aria-label="Back">&#8592;</button>
         <div class="view-head-title">
           <h1>Close the event</h1>
         </div>
@@ -112,7 +114,7 @@
     <!-- ---- Player detail ---- -->
     <section class="view" id="view-player-detail" data-view="player-detail">
       <div class="view-head view-head-back">
-        <button class="btn-back" data-back="players" aria-label="Back to players">&#8592;</button>
+        <button class="btn-back" aria-label="Back to players">&#8592;</button>
         <div class="view-head-title">
           <h1 id="pd-name">&nbsp;</h1>
           <button class="icon-btn" id="btn-edit-player-name" aria-label="Edit player name">
@@ -124,7 +126,7 @@
       <div class="section-row"><h2>Events played</h2></div>
       <div id="pd-nights" class="stack"></div>
       <p class="empty-msg" id="pd-nights-empty" hidden>Hasn't played an event yet.</p>
-      <button class="btn btn-ghost btn-block" id="btn-delete-player" style="margin-top:14px">Remove from roster</button>
+      <button class="btn btn-ghost btn-block section-actions" id="btn-delete-player">Remove from roster</button>
     </section>
 
     <!-- ---- Chips ---- -->
@@ -135,7 +137,7 @@
       </div>
       <div class="pot-hero pot-hero-sm">
         <span class="pot-hero-label">Total chip inventory value</span>
-        <span class="pot-hero-amount" id="chips-total-value"></span>
+        <span class="pot-hero-amount" id="chips-total-value">&euro;0.00</span>
       </div>
       <div id="chips-list" class="stack"></div>
       <p class="empty-msg" id="chips-empty" hidden>No chip denominations set up yet.</p>
@@ -145,38 +147,21 @@
     <section class="view" id="view-settings" data-view="settings">
       <div class="view-head view-head-back">
         <button class="btn-back" aria-label="Back">&#8592;</button>
-        <div class="view-head-title"><h1>Settings &amp; backup</h1></div>
+        <div class="view-head-title"><h1>Backup</h1></div>
       </div>
 
-      <div class="settings-block">
-        <h2>Currency preferences</h2>
-        <div class="field" style="margin-top: 10px;">
-          <label for="f-currency-symbol">Symbol</label>
-          <input type="text" id="f-currency-symbol" placeholder="e.g. €, $, £, CHF">
-        </div>
-        <div class="field">
-          <label for="f-currency-code">Code</label>
-          <input type="text" id="f-currency-code" placeholder="e.g. EUR, USD, GBP, CHF">
-        </div>
-        <button class="btn btn-gold btn-block" id="btn-save-currency" style="margin-top: 8px;">Save currency settings</button>
-      </div>
-
-      <div class="settings-block">
-        <h2>Export</h2>
-        <p class="hint-text">Save a full backup of every event, player, and chip setting as a JSON file.</p>
-        <button class="btn btn-gold btn-block" id="btn-export">Export data now</button>
-      </div>
-
-      <div class="settings-block">
-        <h2>Import</h2>
-        <p class="hint-text">Restore from a previously exported file. This replaces everything currently stored on this device.</p>
-        <button class="btn btn-ghost btn-block" id="btn-import">Choose backup file&hellip;</button>
+      <div class="stack">
+        <button type="button" class="card card-tappable setting-row" id="btn-export">
+          <span class="setting-text"><span class="card-title">Export backup</span><span class="card-sub" id="last-backup"></span></span><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19h14" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <button type="button" class="card card-tappable setting-row" id="btn-import">
+          <span class="card-title">Import backup</span><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 15V4m0 0L7.5 8.5M12 4l4.5 4.5M5 19h14" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
         <input type="file" id="import-file" accept="application/json" hidden>
-      </div>
-
-      <div class="settings-block">
-        <h2>Auto-backup</h2>
-        <p class="hint-text" id="autobackup-status">A backup file is saved to your Downloads folder automatically whenever an event is closed.</p>
+        <label class="card setting-row" for="auto-backup">
+          <span class="card-title">Auto-backup when an event closes</span>
+          <input type="checkbox" id="auto-backup" class="switch">
+        </label>
       </div>
     </section>
 
@@ -189,7 +174,7 @@
       <span>Events</span>
     </button>
     <button class="tab-btn" data-tab="players" aria-label="Players">
-      <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+      <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
       <span>Players</span>
     </button>
     <button class="tab-btn" data-tab="chips" aria-label="Chips">

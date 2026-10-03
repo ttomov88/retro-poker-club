@@ -3,30 +3,37 @@
 (function () {
   "use strict";
 
-  // ---------------- State ----------------
+  // ================= State =================
   const state = {
+    currentView: "nights",
     currentTab: "nights",
     currentNightId: null,
     currentPlayerId: null,
     nightDetailReturnTo: "nights", // 'nights' | 'player-detail'
     settingsReturnTab: "nights",
+    liveNightId: null, // the single open event shown in the header pot strip
   };
 
-  // ---------------- Helpers ----------------
+  const EUR = "\u20AC";
+  const DATE_LOCALE = "en-GB"; // fixed, so dates match the English UI regardless of phone language
+  const TAB_ROOTS = ["nights", "players", "chips"];
+
+  // ================= Helpers =================
+  const $ = (id) => document.getElementById(id);
+
   function round2(n) {
     return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
   }
 
   function fmtMoney(n) {
-    const v = round2(n || 0);
-    return "\u20AC" + v.toFixed(2);
+    return EUR + round2(n || 0).toFixed(2);
   }
 
   function fmtSigned(n) {
     const v = round2(n || 0);
-    if (v > 0) return "+\u20AC" + v.toFixed(2);
-    if (v < 0) return "-\u20AC" + Math.abs(v).toFixed(2);
-    return "\u20AC" + v.toFixed(2);
+    if (v > 0) return "+" + EUR + v.toFixed(2);
+    if (v < 0) return "-" + EUR + Math.abs(v).toFixed(2);
+    return EUR + v.toFixed(2);
   }
 
   function amountClass(n) {
@@ -39,14 +46,30 @@
   function fmtDate(iso) {
     const d = new Date(iso + "T00:00:00");
     if (isNaN(d.getTime())) return iso;
-    return d.toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" });
+    return d.toLocaleDateString(DATE_LOCALE, { weekday: "short", year: "numeric", month: "short", day: "numeric" });
   }
 
   function todayISO() {
     const d = new Date();
-    const off = d.getTimezoneOffset();
-    const local = new Date(d.getTime() - off * 60000);
-    return local.toISOString().slice(0, 10);
+    return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  }
+
+  // Escapes text for use in HTML content AND inside attribute values.
+  function escapeHtml(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function cleanName(s) {
+    return String(s || "").trim().replace(/\s+/g, " ");
+  }
+
+  function sameName(a, b) {
+    return cleanName(a).toLowerCase() === cleanName(b).toLowerCase();
   }
 
   function el(html) {
@@ -56,11 +79,11 @@
   }
 
   function toast(msg) {
-    const t = document.getElementById("toast");
+    const t = $("toast");
     t.textContent = msg;
     t.hidden = false;
     clearTimeout(toast._h);
-    toast._h = setTimeout(() => (t.hidden = true), 2200);
+    toast._h = setTimeout(() => (t.hidden = true), 2400);
   }
 
   function buyinTotal(np) {
@@ -71,65 +94,106 @@
     return round2((night.players || []).reduce((s, np) => s + buyinTotal(np), 0));
   }
 
-  // ---------------- Navigation ----------------
-  function showView(name) {
-    document.querySelectorAll(".view").forEach((v) => v.classList.remove("is-active"));
-    const target = document.getElementById("view-" + name);
-    if (target) target.classList.add("is-active");
-
-    const tabRoots = ["nights", "players", "chips"];
-    if (tabRoots.includes(name)) {
-      state.currentTab = name;
-      document.querySelectorAll(".tab-btn").forEach((b) => {
-        b.classList.toggle("is-active", b.dataset.tab === name);
-      });
-      document.getElementById("pot-strip").hidden = true;
-    }
-    window.scrollTo(0, 0);
-  }
-
-  document.querySelectorAll(".tab-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const tab = btn.dataset.tab;
-      showView(tab);
-      if (tab === "nights") renderNightsList();
-      if (tab === "players") renderPlayersList();
-      if (tab === "chips") renderChipsList();
-    });
-  });
-
-  document.getElementById("btn-brand-home").addEventListener("click", () => {
-    showView("nights");
-    renderNightsList();
-  });
-
-  document.querySelectorAll("[data-back]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const fallback = btn.dataset.back;
-      if (fallback === "night-detail") {
-        showView("night-detail");
-        renderNightDetail(state.currentNightId);
-        updatePotStrip();
-      } else {
-        showView(fallback);
-        if (fallback === "nights") renderNightsList();
-        if (fallback === "players") renderPlayersList();
+  // Click handler that blocks double taps: the button is disabled until the
+  // async work finishes, so a quick second tap can't create duplicates.
+  function onTap(button, handler) {
+    button.addEventListener("click", async (e) => {
+      if (button.disabled) return;
+      button.disabled = true;
+      try {
+        await handler(e);
+      } catch (err) {
+        console.error(err);
+        toast("Something went wrong \u2014 please try again");
+      } finally {
+        button.disabled = false;
       }
     });
-  });
+  }
 
-  // ---------------- Modal system ----------------
-  const backdrop = document.getElementById("modal-backdrop");
-  const modalRoot = document.getElementById("modal-root");
+  // Render guard: if a newer render of the same list started while this one
+  // was waiting for the database, the older one quietly drops out instead of
+  // appending a second copy of the list.
+  const renderSeq = {};
+  function renderToken(key) {
+    renderSeq[key] = (renderSeq[key] || 0) + 1;
+    return renderSeq[key];
+  }
+  function isStale(key, token) {
+    return renderSeq[key] !== token;
+  }
 
-  // Keep the backdrop sized to the actually-visible viewport, not the
-  // full layout viewport, so the sheet sits above the keyboard instead
-  // of being covered by it (fallback for browsers without
-  // interactive-widget=resizes-content support).
-  function syncViewportHeight() {
-    if (window.visualViewport) {
-      backdrop.style.height = window.visualViewport.height + "px";
+  // ================= Navigation =================
+  function showView(name) {
+    state.currentView = name;
+    document.querySelectorAll(".view").forEach((v) => v.classList.toggle("is-active", v.id === "view-" + name));
+    if (TAB_ROOTS.includes(name)) {
+      state.currentTab = name;
+      document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("is-active", b.dataset.tab === name));
     }
+    window.scrollTo(0, 0);
+    updatePotStrip();
+  }
+
+  function openTab(tab) {
+    showView(tab);
+    if (tab === "nights") renderNightsList();
+    if (tab === "players") renderPlayersList();
+    if (tab === "chips") renderChipsList();
+  }
+
+  function openEvent(nightId, returnTo) {
+    state.currentNightId = nightId;
+    state.nightDetailReturnTo = returnTo || "nights";
+    showView("night-detail");
+    renderNightDetail(nightId);
+  }
+
+  function openPlayer(playerId) {
+    state.currentPlayerId = playerId;
+    showView("player-detail");
+    renderPlayerDetail(playerId);
+  }
+
+  // One place that knows what "back" means on every screen. Used by the
+  // on-screen back arrows AND the Android back gesture.
+  // Returns false when already on the home screen (Events).
+  function goBack() {
+    switch (state.currentView) {
+      case "night-detail":
+        if (state.nightDetailReturnTo === "player-detail" && state.currentPlayerId) openPlayer(state.currentPlayerId);
+        else openTab("nights");
+        return true;
+      case "closeout":
+        openEvent(state.currentNightId, state.nightDetailReturnTo);
+        return true;
+      case "player-detail":
+        openTab("players");
+        return true;
+      case "settings":
+        openTab(state.settingsReturnTab);
+        return true;
+      case "players":
+      case "chips":
+        openTab("nights");
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  document.querySelectorAll(".tab-btn").forEach((btn) => btn.addEventListener("click", () => openTab(btn.dataset.tab)));
+  document.querySelectorAll(".btn-back").forEach((btn) => btn.addEventListener("click", goBack));
+  $("btn-brand-home").addEventListener("click", () => openTab("nights"));
+
+  // ================= Modal system =================
+  const backdrop = $("modal-backdrop");
+  const modalRoot = $("modal-root");
+
+  // Keep the backdrop sized to the visible viewport so the sheet sits above
+  // the keyboard (fallback for browsers without interactive-widget support).
+  function syncViewportHeight() {
+    if (window.visualViewport) backdrop.style.height = window.visualViewport.height + "px";
   }
   if (window.visualViewport) {
     window.visualViewport.addEventListener("resize", syncViewportHeight);
@@ -146,78 +210,98 @@
     backdrop.hidden = true;
     modalRoot.innerHTML = "";
   }
+  function isModalOpen() {
+    return !backdrop.hidden;
+  }
+  function focusField(input, select) {
+    setTimeout(() => {
+      input.focus();
+      if (select) input.select();
+    }, 50);
+  }
+
   backdrop.addEventListener("click", (e) => {
     if (e.target === backdrop) closeModal();
   });
-  // Extra safety net: if a field is still hidden behind the keyboard
-  // after it opens, scroll it into view.
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && isModalOpen()) closeModal();
+  });
+  // If a field still ends up behind the keyboard, scroll it into view.
   modalRoot.addEventListener("focusin", (e) => {
     if (e.target.matches("input, select, textarea") && typeof e.target.scrollIntoView === "function") {
-      setTimeout(() => {
-        e.target.scrollIntoView({ block: "center", behavior: "smooth" });
-      }, 300);
+      setTimeout(() => e.target.scrollIntoView({ block: "center", behavior: "smooth" }), 300);
     }
   });
 
-  // ---------------- Pot strip (global header) ----------------
+  // ================= Live pot strip (header) =================
+  // Always visible while any event is open, on every screen.
   async function updatePotStrip() {
-    const strip = document.getElementById("pot-strip");
-    if (!state.currentNightId) {
+    const token = renderToken("pot");
+    const nights = await DB.getAll("nights");
+    if (isStale("pot", token)) return;
+
+    const strip = $("pot-strip");
+    const open = nights.filter((n) => n.status === "open");
+    if (!open.length) {
       strip.hidden = true;
+      state.liveNightId = null;
       return;
     }
-    const night = await DB.get("nights", state.currentNightId);
-    if (!night || night.status !== "open") {
-      strip.hidden = true;
-      return;
+    const total = round2(open.reduce((s, n) => s + nightPotTotal(n), 0));
+    if (open.length === 1) {
+      state.liveNightId = open[0].id;
+      $("pot-strip-night").textContent = fmtDate(open[0].date);
+    } else {
+      state.liveNightId = null;
+      $("pot-strip-night").textContent = open.length + " open events";
     }
+    $("pot-strip-amount").textContent = fmtMoney(total);
     strip.hidden = false;
-    document.getElementById("pot-strip-night").textContent = fmtDate(night.date);
-    document.getElementById("pot-strip-amount").textContent = fmtMoney(nightPotTotal(night));
   }
 
-  // ================= NIGHTS =================
+  function openLiveEvent() {
+    if (state.liveNightId) openEvent(state.liveNightId, "nights");
+    else openTab("nights");
+  }
+  $("pot-strip").addEventListener("click", openLiveEvent);
+  $("pot-strip").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openLiveEvent();
+    }
+  });
+
+  // ================= EVENTS LIST =================
   async function renderNightsList() {
+    const token = renderToken("nights");
     const nights = await DB.getAll("nights");
+    if (isStale("nights", token)) return;
+
     nights.sort((a, b) => (b.date < a.date ? -1 : b.date > a.date ? 1 : b.id - a.id));
-    const list = document.getElementById("nights-list");
-    const empty = document.getElementById("nights-empty");
+    const list = $("nights-list");
     list.innerHTML = "";
-    empty.hidden = nights.length > 0;
+    $("nights-empty").hidden = nights.length > 0;
 
     nights.forEach((night) => {
-      const pot = nightPotTotal(night);
       const count = (night.players || []).length;
-      const statusLabel = night.status === "open" ? "Open" : "Closed";
+      const closed = night.status === "closed";
       const card = el(`
         <div class="card card-tappable">
           <div class="card-row">
             <div>
               <div class="card-title">${fmtDate(night.date)}</div>
-              <div class="card-sub">${count} player${count === 1 ? "" : "s"} &middot; ${fmtMoney(pot)} in play${night.location ? " &middot; " + escapeHtml(night.location) : ""}</div>
+              <div class="card-sub">${count} player${count === 1 ? "" : "s"} &middot; ${fmtMoney(nightPotTotal(night))} in play${night.location ? " &middot; " + escapeHtml(night.location) : ""}</div>
             </div>
-            <span class="badge ${night.status === "closed" ? "is-closed" : ""}">${statusLabel}</span>
+            <span class="badge ${closed ? "is-closed" : ""}">${closed ? "Closed" : "Open"}</span>
           </div>
         </div>
       `);
-      card.addEventListener("click", () => {
-        state.currentNightId = night.id;
-        state.nightDetailReturnTo = "nights";
-        showView("night-detail");
-        renderNightDetail(night.id);
-        updatePotStrip();
-      });
+      card.addEventListener("click", () => openEvent(night.id, "nights"));
       list.appendChild(card);
     });
   }
 
-  function escapeHtml(s) {
-    const d = document.createElement("div");
-    d.textContent = s == null ? "" : s;
-    return d.innerHTML;
-  }
-
-  document.getElementById("btn-new-night").addEventListener("click", () => {
+  $("btn-new-night").addEventListener("click", () => {
     openModal(`
       <h2>New Event</h2>
       <div class="field">
@@ -225,11 +309,11 @@
         <input type="date" id="f-date" value="${todayISO()}">
       </div>
       <div class="field">
-        <label for="f-location">Location <span style="opacity:.6">(optional)</span></label>
+        <label for="f-location">Location <span class="muted">(optional)</span></label>
         <input type="text" id="f-location" placeholder="e.g. Marto's place">
       </div>
       <div class="field">
-        <label for="f-notes">Notes <span style="opacity:.6">(optional)</span></label>
+        <label for="f-notes">Notes <span class="muted">(optional)</span></label>
         <input type="text" id="f-notes" placeholder="Anything worth remembering">
       </div>
       <div class="modal-actions">
@@ -237,69 +321,64 @@
         <button class="btn btn-gold" id="m-create">Start event</button>
       </div>
     `);
-    document.getElementById("m-cancel").addEventListener("click", closeModal);
-    document.getElementById("m-create").addEventListener("click", async () => {
-      const date = document.getElementById("f-date").value || todayISO();
-      const location = document.getElementById("f-location").value.trim();
-      const notes = document.getElementById("f-notes").value.trim();
-      const night = {
-        date,
-        location,
-        notes,
+    $("m-cancel").addEventListener("click", closeModal);
+    onTap($("m-create"), async () => {
+      const id = await DB.add("nights", {
+        date: $("f-date").value || todayISO(),
+        location: $("f-location").value.trim(),
+        notes: $("f-notes").value.trim(),
         status: "open",
         players: [],
         createdAt: Date.now(),
-      };
-      const id = await DB.add("nights", night);
+      });
       closeModal();
-      state.currentNightId = id;
-      state.nightDetailReturnTo = "nights";
-      showView("night-detail");
-      renderNightDetail(id);
-      updatePotStrip();
+      openEvent(id, "nights");
     });
   });
 
-  // ================= NIGHT DETAIL =================
+  // ================= EVENT DETAIL =================
   async function renderNightDetail(nightId) {
+    const token = renderToken("nightDetail");
     const night = await DB.get("nights", nightId);
-    if (!night) return;
+    if (isStale("nightDetail", token) || !night) return;
 
-    document.getElementById("nd-date").textContent = fmtDate(night.date) + (night.location ? " \u2014 " + night.location : "");
-    const statusBadge = document.getElementById("nd-status");
-    statusBadge.textContent = night.status === "open" ? "Open" : "Closed";
-    statusBadge.className = "badge" + (night.status === "closed" ? " is-closed" : "");
+    const isOpen = night.status === "open";
+    $("nd-date").textContent = fmtDate(night.date) + (night.location ? " \u2014 " + night.location : "");
+    $("nd-status").textContent = isOpen ? "Open" : "Closed";
+    $("nd-status").className = "badge" + (isOpen ? "" : " is-closed");
 
-    document.getElementById("nd-pot-amount").textContent = fmtMoney(nightPotTotal(night));
-    document.getElementById("nd-pot-hero").querySelector(".pot-hero-label").textContent =
-      night.status === "open" ? "Total buy-ins" : "Total buy-ins (final)";
+    const notes = $("nd-notes");
+    notes.textContent = night.notes || "";
+    notes.hidden = !night.notes;
 
-    const openActions = document.getElementById("nd-open-actions");
-    const closedSummary = document.getElementById("nd-closed-summary");
-    const playersSection = document.getElementById("nd-players").parentElement;
+    $("nd-pot-amount").textContent = fmtMoney(nightPotTotal(night));
+    $("nd-pot-hero").querySelector(".pot-hero-label").textContent = isOpen ? "Total buy-ins" : "Total buy-ins (final)";
 
-    if (night.status === "open") {
-      openActions.hidden = false;
-      closedSummary.hidden = true;
+    $("nd-open-actions").hidden = !isOpen;
+    $("btn-add-player-to-night").hidden = !isOpen;
+    $("nd-closed-summary").hidden = isOpen;
+
+    if (isOpen) {
       renderNightPlayersEditable(night);
     } else {
-      openActions.hidden = true;
-      closedSummary.hidden = false;
-      document.getElementById("nd-players").innerHTML = "";
-      document.getElementById("nd-players-empty").hidden = true;
+      $("nd-players").innerHTML = "";
+      $("nd-players-empty").hidden = true;
       renderNightResults(night);
     }
   }
 
+  async function refreshEvent(nightId) {
+    await renderNightDetail(nightId);
+    updatePotStrip();
+  }
+
   function renderNightPlayersEditable(night) {
-    const wrap = document.getElementById("nd-players");
-    const empty = document.getElementById("nd-players-empty");
+    const wrap = $("nd-players");
     wrap.innerHTML = "";
     const players = night.players || [];
-    empty.hidden = players.length > 0;
+    $("nd-players-empty").hidden = players.length > 0;
 
     players.forEach((np) => {
-      const total = buyinTotal(np);
       const chips = (np.buyins || [])
         .map((b, i) => `<button type="button" class="buyin-chip" data-idx="${i}">${fmtMoney(b.amount)}</button>`)
         .join("");
@@ -307,7 +386,7 @@
         <div class="card player-row">
           <div class="card-row">
             <div class="card-title">${escapeHtml(np.name)}</div>
-            <div class="money" style="font-weight:700;color:var(--gold-light)">${fmtMoney(total)}</div>
+            <div class="money money-strong">${fmtMoney(buyinTotal(np))}</div>
           </div>
           <div class="buyin-list">${chips}</div>
           <div class="player-actions">
@@ -318,37 +397,40 @@
       `);
       row.querySelector(".btn-add-buyin").addEventListener("click", () => openBuyinModal(night.id, np.playerId));
       row.querySelectorAll(".buyin-chip").forEach((chipEl) => {
-        const idx = Number(chipEl.dataset.idx);
-        chipEl.addEventListener("click", () => openEditBuyinModal(night.id, np.playerId, idx));
+        chipEl.addEventListener("click", () => openEditBuyinModal(night.id, np.playerId, Number(chipEl.dataset.idx)));
       });
-      row.querySelector(".btn-remove-player").addEventListener("click", async () => {
+      onTap(row.querySelector(".btn-remove-player"), async () => {
         if (!confirm(`Remove ${np.name} from this event? Their buy-ins will be removed too.`)) return;
         const fresh = await DB.get("nights", night.id);
         fresh.players = fresh.players.filter((p) => p.playerId !== np.playerId);
         await DB.put("nights", fresh);
-        renderNightDetail(night.id);
-        updatePotStrip();
+        await refreshEvent(night.id);
       });
       wrap.appendChild(row);
     });
   }
 
   function renderNightResults(night) {
-    const wrap = document.getElementById("nd-results");
+    const wrap = $("nd-results");
     wrap.innerHTML = "";
     (night.players || []).forEach((np) => {
-      const total = buyinTotal(np);
-      const row = el(`
+      wrap.appendChild(
+        el(`
         <div class="card">
           <div class="card-row">
             <div class="card-title">${escapeHtml(np.name)}</div>
             <div class="money ${amountClass(np.net)}">${fmtSigned(np.net)}</div>
           </div>
-          <div class="card-sub">Buy-in ${fmtMoney(total)} &middot; Cash-out ${fmtMoney(np.cashOut)}</div>
+          <div class="card-sub">Buy-in ${fmtMoney(buyinTotal(np))} &middot; Cash-out ${fmtMoney(np.cashOut)}</div>
         </div>
-      `);
-      wrap.appendChild(row);
+      `)
+      );
     });
+  }
+
+  function readAmount(input) {
+    const amount = round2(parseFloat(input.value));
+    return amount > 0 ? amount : null;
   }
 
   function openBuyinModal(nightId, playerId) {
@@ -363,29 +445,26 @@
         <button class="btn btn-gold" id="m-add">Add buy-in</button>
       </div>
     `);
-    const input = document.getElementById("f-amount");
-    setTimeout(() => input.focus(), 50);
-    document.getElementById("m-cancel").addEventListener("click", closeModal);
-    document.getElementById("m-add").addEventListener("click", async () => {
-      const amount = round2(parseFloat(input.value));
-      if (!amount || amount <= 0) {
-        toast("Enter an amount above zero");
-        return;
-      }
+    const input = $("f-amount");
+    focusField(input);
+    $("m-cancel").addEventListener("click", closeModal);
+    onTap($("m-add"), async () => {
+      const amount = readAmount(input);
+      if (!amount) return toast("Enter an amount above zero");
       const night = await DB.get("nights", nightId);
       const np = night.players.find((p) => p.playerId === playerId);
+      if (!np) return closeModal();
       np.buyins = np.buyins || [];
       np.buyins.push({ amount, ts: Date.now() });
       await DB.put("nights", night);
       closeModal();
-      renderNightDetail(nightId);
-      updatePotStrip();
+      await refreshEvent(nightId);
     });
   }
 
   async function openEditBuyinModal(nightId, playerId, buyinIndex) {
     const night = await DB.get("nights", nightId);
-    const np = night.players.find((p) => p.playerId === playerId);
+    const np = night && night.players.find((p) => p.playerId === playerId);
     const buyin = np && np.buyins ? np.buyins[buyinIndex] : null;
     if (!buyin) return;
 
@@ -393,59 +472,52 @@
       <h2>Edit buy-in</h2>
       <div class="field">
         <label for="f-edit-amount">Amount (EUR)</label>
-        <input type="number" id="f-edit-amount" inputmode="decimal" step="0.01" min="0" class="amount-input" value="${buyin.amount}">
+        <input type="number" id="f-edit-amount" inputmode="decimal" step="0.01" min="0" class="amount-input" value="${escapeHtml(buyin.amount)}">
       </div>
       <div class="modal-actions">
         <button class="btn btn-ghost btn-danger-text" id="m-delete">Delete</button>
+        <button class="btn btn-ghost" id="m-cancel">Cancel</button>
         <button class="btn btn-gold" id="m-save">Save</button>
       </div>
     `);
-    const input = document.getElementById("f-edit-amount");
-    setTimeout(() => {
-      input.focus();
-      input.select();
-    }, 50);
+    const input = $("f-edit-amount");
+    focusField(input, true);
+    $("m-cancel").addEventListener("click", closeModal);
 
-    document.getElementById("m-delete").addEventListener("click", async () => {
+    async function updateBuyin(change) {
+      const fresh = await DB.get("nights", nightId);
+      const freshNp = fresh.players.find((p) => p.playerId === playerId);
+      if (!freshNp || !freshNp.buyins[buyinIndex]) return closeModal();
+      change(freshNp.buyins);
+      await DB.put("nights", fresh);
+      closeModal();
+      await refreshEvent(nightId);
+    }
+
+    onTap($("m-delete"), async () => {
       if (!confirm("Delete this buy-in?")) return;
-      const fresh = await DB.get("nights", nightId);
-      const freshNp = fresh.players.find((p) => p.playerId === playerId);
-      freshNp.buyins.splice(buyinIndex, 1);
-      await DB.put("nights", fresh);
-      closeModal();
-      renderNightDetail(nightId);
-      updatePotStrip();
+      await updateBuyin((buyins) => buyins.splice(buyinIndex, 1));
     });
-
-    document.getElementById("m-save").addEventListener("click", async () => {
-      const amount = round2(parseFloat(input.value));
-      if (!amount || amount <= 0) {
-        toast("Enter an amount above zero");
-        return;
-      }
-      const fresh = await DB.get("nights", nightId);
-      const freshNp = fresh.players.find((p) => p.playerId === playerId);
-      freshNp.buyins[buyinIndex].amount = amount;
-      await DB.put("nights", fresh);
-      closeModal();
-      renderNightDetail(nightId);
-      updatePotStrip();
+    onTap($("m-save"), async () => {
+      const amount = readAmount(input);
+      if (!amount) return toast("Enter an amount above zero");
+      await updateBuyin((buyins) => (buyins[buyinIndex].amount = amount));
     });
   }
 
-  document.getElementById("btn-add-player-to-night").addEventListener("click", async () => {
+  $("btn-add-player-to-night").addEventListener("click", async () => {
     const night = await DB.get("nights", state.currentNightId);
     const roster = await DB.getAll("players");
     const already = new Set((night.players || []).map((p) => p.playerId));
-    const available = roster.filter((p) => !already.has(p.id));
+    const available = roster.filter((p) => !already.has(p.id)).sort((a, b) => a.name.localeCompare(b.name));
 
     const picks = new Set();
     openModal(`
       <h2>Add players</h2>
-      ${available.length ? `<div class="roster-pick" id="roster-pick"></div>` : `<p class="hint-text">No one else in your roster yet &mdash; add a new name below.</p>`}
+      ${available.length ? `<div class="roster-pick" id="roster-pick"></div>` : `<p class="hint-text">Everyone in your roster is already here &mdash; add a new name below.</p>`}
       <div class="field">
         <label for="f-newname">New player</label>
-        <input type="text" id="f-newname" placeholder="Type a name and tap Add">
+        <input type="text" id="f-newname" placeholder="Type a name">
       </div>
       <div class="modal-actions">
         <button class="btn btn-ghost" id="m-cancel">Cancel</button>
@@ -454,156 +526,158 @@
     `);
 
     if (available.length) {
-      const pickWrap = document.getElementById("roster-pick");
+      const pickWrap = $("roster-pick");
       available.forEach((p) => {
         const pill = el(`<button type="button" class="roster-pill">${escapeHtml(p.name)}</button>`);
         pill.addEventListener("click", () => {
-          if (picks.has(p.id)) {
-            picks.delete(p.id);
-            pill.classList.remove("is-picked");
-          } else {
-            picks.add(p.id);
-            pill.classList.add("is-picked");
-          }
+          if (picks.has(p.id)) picks.delete(p.id);
+          else picks.add(p.id);
+          pill.classList.toggle("is-picked", picks.has(p.id));
         });
         pickWrap.appendChild(pill);
       });
     }
 
-    document.getElementById("m-cancel").addEventListener("click", closeModal);
-    document.getElementById("m-confirm").addEventListener("click", async () => {
-      const newName = document.getElementById("f-newname").value.trim();
-      const freshNight = await DB.get("nights", state.currentNightId);
-      freshNight.players = freshNight.players || [];
+    $("m-cancel").addEventListener("click", closeModal);
+    onTap($("m-confirm"), async () => {
+      const newName = cleanName($("f-newname").value);
+      if (!picks.size && !newName) return toast("Pick a player or type a name");
 
-      for (const pid of picks) {
-        const p = roster.find((r) => r.id === pid);
-        if (p) freshNight.players.push({ playerId: p.id, name: p.name, buyins: [], cashOut: null, net: null });
-      }
+      const freshNight = await DB.get("nights", state.currentNightId);
+      const freshRoster = await DB.getAll("players");
+      freshNight.players = freshNight.players || [];
+      const inEvent = new Set(freshNight.players.map((p) => p.playerId));
+      const toAdd = [];
+      let note = "";
+
+      picks.forEach((pid) => {
+        const p = freshRoster.find((r) => r.id === pid);
+        if (p && !inEvent.has(p.id)) toAdd.push(p);
+      });
+
       if (newName) {
-        const newId = await DB.add("players", { name: newName, createdAt: Date.now() });
-        freshNight.players.push({ playerId: newId, name: newName, buyins: [], cashOut: null, net: null });
+        const existing = freshRoster.find((p) => sameName(p.name, newName));
+        if (existing && inEvent.has(existing.id)) {
+          return toast(`${existing.name} is already in this event`);
+        }
+        if (existing) {
+          // Name matches someone in the roster: reuse them, so their stats stay in one place.
+          if (!toAdd.some((p) => p.id === existing.id)) toAdd.push(existing);
+          note = `${existing.name} was already in your roster \u2014 added them`;
+        } else {
+          const newId = await DB.add("players", { name: newName, createdAt: Date.now() });
+          toAdd.push({ id: newId, name: newName });
+        }
       }
+
+      toAdd.forEach((p) => freshNight.players.push({ playerId: p.id, name: p.name, buyins: [], cashOut: null, net: null }));
       await DB.put("nights", freshNight);
       closeModal();
-      renderNightDetail(state.currentNightId);
-      updatePotStrip();
+      await refreshEvent(state.currentNightId);
+      if (note) toast(note);
     });
   });
 
-  document.getElementById("btn-close-night").addEventListener("click", async () => {
+  onTap($("btn-close-night"), async () => {
     const night = await DB.get("nights", state.currentNightId);
-    if (!night.players || night.players.length === 0) {
-      toast("Add players before closing the event");
-      return;
-    }
+    if (!night.players || night.players.length === 0) return toast("Add players before closing the event");
     showView("closeout");
     renderCloseout(night);
   });
 
-  document.getElementById("btn-reopen-night").addEventListener("click", async () => {
+  onTap($("btn-reopen-night"), async () => {
     if (!confirm("Reopen this event? You'll be able to edit buy-ins and results again.")) return;
     const night = await DB.get("nights", state.currentNightId);
     night.status = "open";
     night.closedAt = null;
     await DB.put("nights", night);
-    renderNightDetail(night.id);
-    updatePotStrip();
+    await refreshEvent(night.id);
   });
 
-  document.getElementById("btn-delete-night").addEventListener("click", async () => {
+  onTap($("btn-delete-night"), async () => {
     if (!confirm("Delete this event permanently? Buy-ins and results will be lost. This can't be undone.")) return;
     await DB.delete("nights", state.currentNightId);
     state.currentNightId = null;
-    if (state.nightDetailReturnTo === "player-detail") {
-      showView("player-detail");
-      renderPlayerDetail(state.currentPlayerId);
-    } else {
-      showView("nights");
-      renderNightsList();
-    }
-    updatePotStrip();
+    if (state.nightDetailReturnTo === "player-detail" && state.currentPlayerId) openPlayer(state.currentPlayerId);
+    else openTab("nights");
     toast("Event deleted");
   });
 
-  // ================= CLOSEOUT =================
+  // ================= CLOSE-OUT =================
   function renderCloseout(night) {
-    const wrap = document.getElementById("closeout-list");
+    const wrap = $("closeout-list");
     wrap.innerHTML = "";
-
     night.players.forEach((np) => {
-      const total = buyinTotal(np);
       const row = el(`
-        <div class="card closeout-row" data-pid="${np.playerId}">
+        <div class="card closeout-row">
           <div class="card-row">
             <div class="card-title">${escapeHtml(np.name)}</div>
-            <div class="card-sub">Buy-in ${fmtMoney(total)}</div>
+            <div class="card-sub">Buy-in ${fmtMoney(buyinTotal(np))}</div>
           </div>
           <div class="field-row">
-            <label>Cash-out</label>
-            <input type="number" inputmode="decimal" step="0.01" class="amount-input" id="in-${np.playerId}" placeholder="0.00">
+            <label for="in-${np.playerId}">Cash-out</label>
+            <input type="number" inputmode="decimal" step="0.01" min="0" class="amount-input" id="in-${np.playerId}" placeholder="0.00">
           </div>
         </div>
       `);
-
-      const inputEl = row.querySelector(`#in-${np.playerId}`);
-      inputEl.addEventListener("input", () => updateCloseoutCheck(night));
-
+      row.querySelector("input").addEventListener("input", () => updateCloseoutCheck(night));
       wrap.appendChild(row);
     });
-
     updateCloseoutCheck(night);
   }
 
   function readCloseoutRows(night) {
     return night.players.map((np) => {
       const total = buyinTotal(np);
-      const raw = document.getElementById(`in-${np.playerId}`);
-      const val = raw && raw.value !== "" ? round2(parseFloat(raw.value)) : null;
-      let cashOut = null;
-      let net = null;
-      if (val !== null && !isNaN(val)) {
-        cashOut = val;
-        net = round2(cashOut - total);
-      }
-      return { playerId: np.playerId, name: np.name, total, cashOut, net };
+      const input = $(`in-${np.playerId}`);
+      const raw = input && input.value !== "" ? round2(parseFloat(input.value)) : null;
+      const valid = raw !== null && !isNaN(raw);
+      return {
+        playerId: np.playerId,
+        name: np.name,
+        total,
+        negative: valid && raw < 0,
+        cashOut: valid && raw >= 0 ? raw : null,
+        net: valid && raw >= 0 ? round2(raw - total) : null,
+      };
     });
   }
 
   function updateCloseoutCheck(night) {
     const rows = readCloseoutRows(night);
-    const checkEl = document.getElementById("closeout-check");
+    const check = $("closeout-check");
+    const negative = rows.find((r) => r.negative);
+    if (negative) {
+      check.className = "closeout-check is-off";
+      check.textContent = `Cash-out can't be negative (${negative.name})`;
+      return;
+    }
     const filled = rows.filter((r) => r.net !== null);
     if (filled.length < rows.length) {
-      checkEl.className = "closeout-check";
-      checkEl.textContent = `${filled.length} of ${rows.length} players entered`;
+      check.className = "closeout-check";
+      check.textContent = `${filled.length} of ${rows.length} players entered`;
       return;
     }
     const sumNet = round2(rows.reduce((s, r) => s + r.net, 0));
     if (Math.abs(sumNet) < 0.005) {
-      checkEl.className = "closeout-check is-balanced";
-      checkEl.textContent = "Balanced \u2713 \u2014 buy-ins match cash-outs";
+      check.className = "closeout-check is-balanced";
+      check.textContent = "Balanced \u2713 \u2014 buy-ins match cash-outs";
     } else {
-      checkEl.className = "closeout-check is-off";
-      checkEl.textContent = `Off by ${fmtMoney(Math.abs(sumNet))} \u2014 ${sumNet > 0 ? "more cashed out than bought in" : "less cashed out than bought in"}`;
+      check.className = "closeout-check is-off";
+      check.textContent = `Off by ${fmtMoney(Math.abs(sumNet))} \u2014 ${sumNet > 0 ? "more cashed out than bought in" : "less cashed out than bought in"}`;
     }
   }
 
-  document.getElementById("btn-finish-night").addEventListener("click", async () => {
+  onTap($("btn-finish-night"), async () => {
     const night = await DB.get("nights", state.currentNightId);
     const rows = readCloseoutRows(night);
-    const missing = rows.filter((r) => r.net === null);
-    if (missing.length) {
-      toast(`Enter a result for ${missing[0].name}`);
-      return;
-    }
+    const negative = rows.find((r) => r.negative);
+    if (negative) return toast(`Cash-out can't be negative for ${negative.name}`);
+    const missing = rows.find((r) => r.net === null);
+    if (missing) return toast(`Enter a cash-out for ${missing.name}`);
+
     const sumNet = round2(rows.reduce((s, r) => s + r.net, 0));
-    if (Math.abs(sumNet) >= 0.005) {
-      const proceed = confirm(
-        `Buy-ins and cash-outs are off by ${fmtMoney(Math.abs(sumNet))}. Save anyway?`
-      );
-      if (!proceed) return;
-    }
+    if (Math.abs(sumNet) >= 0.005 && !confirm(`Buy-ins and cash-outs are off by ${fmtMoney(Math.abs(sumNet))}. Save anyway?`)) return;
 
     night.players = night.players.map((np) => {
       const r = rows.find((x) => x.playerId === np.playerId);
@@ -613,43 +687,40 @@
     night.closedAt = Date.now();
     await DB.put("nights", night);
 
-    await autoBackup();
-
-    showView("night-detail");
-    renderNightDetail(night.id);
-    updatePotStrip();
-    toast("Event closed \u2014 backup saved");
+    openEvent(night.id, state.nightDetailReturnTo);
+    if (autoBackupEnabled()) {
+      toast((await autoBackup()) ? "Event closed \u2014 backup saved" : "Event closed \u2014 backup failed, export manually");
+    } else {
+      toast("Event closed");
+    }
   });
 
   // ================= PLAYERS =================
-  async function computePlayerStats(playerId) {
-    const nights = await DB.getAll("nights");
-    const closed = nights.filter((n) => n.status === "closed");
-    let nightsPlayed = 0,
-      totalBuyIn = 0,
-      totalCashOut = 0,
-      net = 0;
-    let biggestWin = null,
-      biggestLoss = null;
+  // Pure function: stats for one player from an already-loaded list of events.
+  // Only closed events count (open ones have no result yet).
+  function playerStats(nights, playerId) {
+    let eventsPlayed = 0, totalBuyIn = 0, totalCashOut = 0, net = 0;
+    let biggestWin = null, biggestLoss = null;
     const history = [];
 
-    closed.forEach((n) => {
+    nights.forEach((n) => {
+      if (n.status !== "closed") return;
       const np = (n.players || []).find((p) => p.playerId === playerId);
       if (!np) return;
-      nightsPlayed++;
-      const bi = buyinTotal(np);
-      totalBuyIn += bi;
+      const pNet = Number(np.net || 0);
+      eventsPlayed++;
+      totalBuyIn += buyinTotal(np);
       totalCashOut += Number(np.cashOut || 0);
-      net += Number(np.net || 0);
-      if (np.net > 0 && (biggestWin === null || np.net > biggestWin)) biggestWin = np.net;
-      if (np.net < 0 && (biggestLoss === null || np.net < biggestLoss)) biggestLoss = np.net;
-      history.push({ nightId: n.id, date: n.date, net: np.net });
+      net += pNet;
+      if (pNet > 0 && (biggestWin === null || pNet > biggestWin)) biggestWin = pNet;
+      if (pNet < 0 && (biggestLoss === null || pNet < biggestLoss)) biggestLoss = pNet;
+      history.push({ nightId: n.id, date: n.date, net: pNet });
     });
 
-    history.sort((a, b) => (b.date < a.date ? -1 : 1));
+    history.sort((a, b) => (a.date === b.date ? b.nightId - a.nightId : a.date < b.date ? 1 : -1));
 
     return {
-      nightsPlayed,
+      eventsPlayed,
       totalBuyIn: round2(totalBuyIn),
       totalCashOut: round2(totalCashOut),
       net: round2(net),
@@ -666,50 +737,44 @@
   }
 
   async function renderPlayersList() {
-    const roster = await DB.getAll("players");
-    const list = document.getElementById("players-list");
-    const empty = document.getElementById("players-empty");
+    const token = renderToken("players");
+    const [roster, nights] = await Promise.all([DB.getAll("players"), DB.getAll("nights")]);
+    if (isStale("players", token)) return;
+
+    const list = $("players-list");
     list.innerHTML = "";
-    empty.hidden = roster.length > 0;
+    $("players-empty").hidden = roster.length > 0;
 
-    const withStats = await Promise.all(
-      roster.map(async (p) => ({ p, stats: await computePlayerStats(p.id) }))
-    );
-    withStats.sort((a, b) => a.p.name.localeCompare(b.p.name));
-
-    withStats.forEach(({ p, stats }) => {
-      const card = el(`
-        <div class="card card-tappable">
-          <div class="card-row">
-            <div>
-              <div class="card-title">${escapeHtml(p.name)}</div>
-              <div class="card-sub">${stats.nightsPlayed} event${stats.nightsPlayed === 1 ? "" : "s"} played</div>
-            </div>
-            <div style="display:flex;align-items:center;gap:8px;">
-              <div class="money ${amountClass(stats.net)}">${fmtSigned(stats.net)}</div>
-              <button type="button" class="icon-btn icon-btn-sm btn-roster-delete" aria-label="Remove ${escapeHtml(p.name)} from roster">
-                <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M6 7h12l-1 13.5a1.5 1.5 0 0 1-1.5 1.5h-7a1.5 1.5 0 0 1-1.5-1.5L6 7zm3-3h6l1 2H8l1-2zM4 7h16" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
-              </button>
+    roster
+      .map((p) => ({ p, stats: playerStats(nights, p.id) }))
+      .sort((a, b) => a.p.name.localeCompare(b.p.name))
+      .forEach(({ p, stats }) => {
+        const card = el(`
+          <div class="card card-tappable">
+            <div class="card-row">
+              <div>
+                <div class="card-title">${escapeHtml(p.name)}</div>
+                <div class="card-sub">${stats.eventsPlayed} event${stats.eventsPlayed === 1 ? "" : "s"} played</div>
+              </div>
+              <div class="row-end">
+                <div class="money ${amountClass(stats.net)}">${fmtSigned(stats.net)}</div>
+                <button type="button" class="icon-btn icon-btn-sm btn-roster-delete" aria-label="Remove ${escapeHtml(p.name)} from roster">
+                  <svg viewBox="0 0 24 24" width="16" height="16"><path d="M6 7h12l-1 13.5a1.5 1.5 0 0 1-1.5 1.5h-7a1.5 1.5 0 0 1-1.5-1.5L6 7zm3-3h6l1 2H8l1-2zM4 7h16" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      `);
-      card.addEventListener("click", () => {
-        state.currentPlayerId = p.id;
-        showView("player-detail");
-        renderPlayerDetail(p.id);
+        `);
+        card.addEventListener("click", () => openPlayer(p.id));
+        onTap(card.querySelector(".btn-roster-delete"), async (e) => {
+          e.stopPropagation();
+          if (await confirmDeletePlayer(p.id)) renderPlayersList();
+        });
+        list.appendChild(card);
       });
-      card.querySelector(".btn-roster-delete").addEventListener("click", async (e) => {
-        e.stopPropagation();
-        const ok = await confirmDeletePlayer(p.id);
-        if (!ok) return;
-        renderPlayersList();
-      });
-      list.appendChild(card);
-    });
   }
 
-  document.getElementById("btn-add-player").addEventListener("click", () => {
+  $("btn-add-player").addEventListener("click", () => {
     openModal(`
       <h2>Add player</h2>
       <div class="field">
@@ -721,15 +786,14 @@
         <button class="btn btn-gold" id="m-add">Add</button>
       </div>
     `);
-    const input = document.getElementById("f-pname");
-    setTimeout(() => input.focus(), 50);
-    document.getElementById("m-cancel").addEventListener("click", closeModal);
-    document.getElementById("m-add").addEventListener("click", async () => {
-      const name = input.value.trim();
-      if (!name) {
-        toast("Enter a name");
-        return;
-      }
+    const input = $("f-pname");
+    focusField(input);
+    $("m-cancel").addEventListener("click", closeModal);
+    onTap($("m-add"), async () => {
+      const name = cleanName(input.value);
+      if (!name) return toast("Enter a name");
+      const existing = (await DB.getAll("players")).find((p) => sameName(p.name, name));
+      if (existing) return toast(`${existing.name} is already in the roster`);
       await DB.add("players", { name, createdAt: Date.now() });
       closeModal();
       renderPlayersList();
@@ -737,34 +801,32 @@
   });
 
   async function renderPlayerDetail(playerId) {
-    const player = await DB.get("players", playerId);
-    if (!player) return;
-    document.getElementById("pd-name").textContent = player.name;
-    const stats = await computePlayerStats(playerId);
+    const token = renderToken("playerDetail");
+    const [player, nights] = await Promise.all([DB.get("players", playerId), DB.getAll("nights")]);
+    if (isStale("playerDetail", token) || !player) return;
+
+    const stats = playerStats(nights, playerId);
+    $("pd-name").textContent = player.name;
 
     const statCards = [
-      ["Events played", stats.nightsPlayed, ""],
+      ["Events played", stats.eventsPlayed, ""],
       ["Net profit/loss", fmtSigned(stats.net), amountClass(stats.net)],
       ["Total buy-in", fmtMoney(stats.totalBuyIn), ""],
       ["Total cash-out", fmtMoney(stats.totalCashOut), ""],
       ["Biggest win", stats.biggestWin === null ? "\u2014" : fmtSigned(stats.biggestWin), "amount-pos"],
       ["Biggest loss", stats.biggestLoss === null ? "\u2014" : fmtSigned(stats.biggestLoss), "amount-neg"],
     ];
-    const grid = document.getElementById("pd-stats");
-    grid.innerHTML = statCards
-      .map(
-        ([label, value, cls]) => `
-      <div class="stat-card">
-        <div class="stat-label">${label}</div>
-        <div class="stat-value ${cls}">${value}</div>
-      </div>`
-      )
+    $("pd-stats").innerHTML = statCards
+      .map(([label, value, cls]) => `
+        <div class="stat-card">
+          <div class="stat-label">${label}</div>
+          <div class="stat-value ${cls}">${value}</div>
+        </div>`)
       .join("");
 
-    const nightsWrap = document.getElementById("pd-nights");
-    const nightsEmpty = document.getElementById("pd-nights-empty");
-    nightsWrap.innerHTML = "";
-    nightsEmpty.hidden = stats.history.length > 0;
+    const wrap = $("pd-nights");
+    wrap.innerHTML = "";
+    $("pd-nights-empty").hidden = stats.history.length > 0;
     stats.history.forEach((h) => {
       const row = el(`
         <div class="card card-tappable">
@@ -774,18 +836,12 @@
           </div>
         </div>
       `);
-      row.addEventListener("click", () => {
-        state.currentNightId = h.nightId;
-        state.nightDetailReturnTo = "player-detail";
-        showView("night-detail");
-        renderNightDetail(h.nightId);
-        updatePotStrip();
-      });
-      nightsWrap.appendChild(row);
+      row.addEventListener("click", () => openEvent(h.nightId, "player-detail"));
+      wrap.appendChild(row);
     });
   }
 
-  document.getElementById("btn-edit-player-name").addEventListener("click", async () => {
+  $("btn-edit-player-name").addEventListener("click", async () => {
     const player = await DB.get("players", state.currentPlayerId);
     if (!player) return;
     openModal(`
@@ -799,86 +855,65 @@
         <button class="btn btn-gold" id="m-save">Save</button>
       </div>
     `);
-    const input = document.getElementById("f-pname-edit");
-    setTimeout(() => {
-      input.focus();
-      input.select();
-    }, 50);
-    document.getElementById("m-cancel").addEventListener("click", closeModal);
-    document.getElementById("m-save").addEventListener("click", async () => {
-      const newName = input.value.trim();
-      if (!newName) {
-        toast("Enter a name");
-        return;
-      }
+    const input = $("f-pname-edit");
+    focusField(input, true);
+    $("m-cancel").addEventListener("click", closeModal);
+    onTap($("m-save"), async () => {
+      const newName = cleanName(input.value);
+      if (!newName) return toast("Enter a name");
+      const clash = (await DB.getAll("players")).find((p) => p.id !== player.id && sameName(p.name, newName));
+      if (clash) return toast(`Another player is already called ${clash.name}`);
+
       player.name = newName;
       await DB.put("players", player);
-
-      // Keep historical event records in sync with the new name
-      const allNights = await DB.getAll("nights");
-      for (const night of allNights) {
-        let changed = false;
-        (night.players || []).forEach((np) => {
-          if (np.playerId === player.id && np.name !== newName) {
-            np.name = newName;
-            changed = true;
-          }
-        });
-        if (changed) await DB.put("nights", night);
+      // Keep past events in sync with the new name
+      for (const night of await DB.getAll("nights")) {
+        const mine = (night.players || []).filter((np) => np.playerId === player.id && np.name !== newName);
+        if (mine.length) {
+          mine.forEach((np) => (np.name = newName));
+          await DB.put("nights", night);
+        }
       }
-
       closeModal();
-      renderPlayerDetail(state.currentPlayerId);
+      renderPlayerDetail(player.id);
       toast("Name updated");
     });
   });
 
-  document.getElementById("btn-delete-player").addEventListener("click", async () => {
-    const ok = await confirmDeletePlayer(state.currentPlayerId);
-    if (!ok) return;
-    showView("players");
-    renderPlayersList();
-  });
-
-  // Fix: night-detail back button should honor where we came from
-  document.querySelectorAll('#view-night-detail .btn-back').forEach((btn) => {
-    btn.addEventListener("click", () => {
-      if (state.nightDetailReturnTo === "player-detail") {
-        showView("player-detail");
-        renderPlayerDetail(state.currentPlayerId);
-      } else {
-        showView("nights");
-        renderNightsList();
-      }
-    });
+  onTap($("btn-delete-player"), async () => {
+    if (await confirmDeletePlayer(state.currentPlayerId)) openTab("players");
   });
 
   // ================= CHIPS =================
   async function renderChipsList() {
+    const token = renderToken("chips");
     const chips = await DB.getAll("chips");
+    if (isStale("chips", token)) return;
+
     chips.sort((a, b) => a.value - b.value);
-    const list = document.getElementById("chips-list");
-    const empty = document.getElementById("chips-empty");
+    const list = $("chips-list");
     list.innerHTML = "";
-    empty.hidden = chips.length > 0;
+    $("chips-empty").hidden = chips.length > 0;
 
     let totalValue = 0;
     chips.forEach((c) => {
-      totalValue += (Number(c.value) || 0) * (Number(c.qty) || 0);
+      const lineValue = round2((Number(c.value) || 0) * (Number(c.qty) || 0));
+      totalValue += lineValue;
       const row = el(`
         <div class="card card-tappable chip-row">
-          <span class="chip-swatch" style="background:${escapeHtml(c.color)}"></span>
+          <span class="chip-swatch"></span>
           <div class="chip-info">
             <div class="card-title">${escapeHtml(c.label)}</div>
-            <div class="chip-qty">${fmtMoney(c.value)} each &middot; ${c.qty} owned</div>
+            <div class="chip-qty">${fmtMoney(c.value)} each &middot; ${Number(c.qty) || 0} owned</div>
           </div>
-          <div class="money" style="font-weight:700;color:var(--gold-light)">${fmtMoney(c.value * c.qty)}</div>
+          <div class="money money-strong">${fmtMoney(lineValue)}</div>
         </div>
       `);
+      row.querySelector(".chip-swatch").style.background = c.color; // set via DOM, never via HTML string
       row.addEventListener("click", () => openChipModal(c));
       list.appendChild(row);
     });
-    document.getElementById("chips-total-value").textContent = fmtMoney(totalValue);
+    $("chips-total-value").textContent = fmtMoney(totalValue);
   }
 
   function openChipModal(existing) {
@@ -887,66 +922,59 @@
       <h2>${isEdit ? "Edit chip" : "Add chip"}</h2>
       <div class="field">
         <label for="f-color">Color</label>
-        <input type="color" id="f-color" value="${existing ? existing.color : "#BC9D58"}">
+        <input type="color" id="f-color" value="${escapeHtml(isEdit ? existing.color : "#BC9D58")}">
       </div>
       <div class="field">
         <label for="f-label">Label</label>
-        <input type="text" id="f-label" placeholder="e.g. Red" value="${existing ? escapeHtml(existing.label) : ""}">
+        <input type="text" id="f-label" placeholder="e.g. Red" value="${isEdit ? escapeHtml(existing.label) : ""}">
       </div>
       <div class="field">
         <label for="f-value">Value (EUR)</label>
-        <input type="number" id="f-value" step="0.01" min="0" inputmode="decimal" value="${existing ? existing.value : ""}">
+        <input type="number" id="f-value" step="0.01" min="0" inputmode="decimal" value="${isEdit ? escapeHtml(existing.value) : ""}">
       </div>
       <div class="field">
         <label for="f-qty">Quantity owned</label>
-        <input type="number" id="f-qty" step="1" min="0" inputmode="numeric" value="${existing ? existing.qty : ""}">
+        <input type="number" id="f-qty" step="1" min="0" inputmode="numeric" value="${isEdit ? escapeHtml(existing.qty) : ""}">
       </div>
       <div class="modal-actions">
-        ${isEdit ? `<button class="btn btn-ghost btn-danger-text" id="m-delete">Delete</button>` : `<button class="btn btn-ghost" id="m-cancel">Cancel</button>`}
+        ${isEdit ? `<button class="btn btn-ghost btn-danger-text" id="m-delete">Delete</button>` : ""}
+        <button class="btn btn-ghost" id="m-cancel">Cancel</button>
         <button class="btn btn-gold" id="m-save">${isEdit ? "Save" : "Add chip"}</button>
       </div>
     `);
-    if (!isEdit) document.getElementById("m-cancel").addEventListener("click", closeModal);
-    if (isEdit)
-      document.getElementById("m-delete").addEventListener("click", async () => {
+    $("m-cancel").addEventListener("click", closeModal);
+    if (isEdit) {
+      onTap($("m-delete"), async () => {
         if (!confirm(`Delete the ${existing.label} chip?`)) return;
         await DB.delete("chips", existing.id);
         closeModal();
         renderChipsList();
       });
-    document.getElementById("m-save").addEventListener("click", async () => {
-      const color = document.getElementById("f-color").value;
-      const label = document.getElementById("f-label").value.trim();
-      const value = round2(parseFloat(document.getElementById("f-value").value));
-      const qty = parseInt(document.getElementById("f-qty").value, 10);
-      if (!label || isNaN(value) || isNaN(qty)) {
-        toast("Fill in every field");
-        return;
-      }
-      const obj = { color, label, value, qty };
-      if (isEdit) {
-        obj.id = existing.id;
-        await DB.put("chips", obj);
-      } else {
-        await DB.add("chips", obj);
-      }
+    }
+    onTap($("m-save"), async () => {
+      const label = $("f-label").value.trim();
+      const value = round2(parseFloat($("f-value").value));
+      const qtyRaw = $("f-qty").value;
+      const qty = Number(qtyRaw);
+      if (!label) return toast("Enter a label");
+      if (!(value > 0)) return toast("Value must be above zero");
+      if (qtyRaw === "" || !Number.isInteger(qty) || qty < 0) return toast("Quantity must be a whole number, 0 or more");
+
+      const obj = { color: $("f-color").value, label, value, qty };
+      if (isEdit) await DB.put("chips", { ...obj, id: existing.id });
+      else await DB.add("chips", obj);
       closeModal();
       renderChipsList();
     });
   }
 
-  document.getElementById("btn-add-chip").addEventListener("click", () => openChipModal(null));
+  $("btn-add-chip").addEventListener("click", () => openChipModal(null));
 
   // ================= SETTINGS / EXPORT / IMPORT =================
-  document.getElementById("btn-open-settings").addEventListener("click", () => {
-    state.settingsReturnTab = state.currentTab;
+  $("btn-open-settings").addEventListener("click", () => {
+    if (state.currentView !== "settings") state.settingsReturnTab = state.currentTab;
+    updateLastBackupLabel();
     showView("settings");
-  });
-  document.querySelector('#view-settings .btn-back').addEventListener("click", () => {
-    showView(state.settingsReturnTab);
-    if (state.settingsReturnTab === "nights") renderNightsList();
-    if (state.settingsReturnTab === "players") renderPlayersList();
-    if (state.settingsReturnTab === "chips") renderChipsList();
   });
 
   function downloadJSON(data, filename) {
@@ -962,46 +990,87 @@
   }
 
   function backupFilename() {
-    const d = new Date();
-    const stamp = d.toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
     return `retro-poker-club-backup-${stamp}.json`;
   }
 
+  // Device-only preferences (small, non-critical; safe if storage is unavailable)
+  const pref = {
+    get(key) {
+      try {
+        return localStorage.getItem(key);
+      } catch (_) {
+        return null;
+      }
+    },
+    set(key, value) {
+      try {
+        localStorage.setItem(key, value);
+      } catch (_) {}
+    },
+  };
+  const AUTO_BACKUP_KEY = "rpc-auto-backup";
+  const LAST_BACKUP_KEY = "rpc-last-backup";
+  const RESTORE_DISMISSED_KEY = "rpc-restore-dismissed";
+
+  function autoBackupEnabled() {
+    return pref.get(AUTO_BACKUP_KEY) !== "off";
+  }
+  function setAutoBackup(on) {
+    pref.set(AUTO_BACKUP_KEY, on ? "on" : "off");
+  }
+
+  function timeAgo(ts) {
+    const mins = Math.floor((Date.now() - ts) / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return mins + " min ago";
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return hours + (hours === 1 ? " hour ago" : " hours ago");
+    const days = Math.floor(hours / 24);
+    return days === 1 ? "yesterday" : days + " days ago";
+  }
+  function updateLastBackupLabel() {
+    const ts = Number(pref.get(LAST_BACKUP_KEY));
+    $("last-backup").textContent = ts ? "Last backup: " + timeAgo(ts) : "No backup yet on this device";
+  }
+  $("auto-backup").checked = autoBackupEnabled();
+  $("auto-backup").addEventListener("change", (e) => {
+    setAutoBackup(e.target.checked);
+    toast(e.target.checked ? "Auto-backup on" : "Auto-backup off");
+  });
+
   async function autoBackup() {
     try {
-      const data = await DB.exportAll();
-      downloadJSON(data, backupFilename());
+      downloadJSON(await DB.exportAll(), backupFilename());
+      pref.set(LAST_BACKUP_KEY, String(Date.now()));
+      updateLastBackupLabel();
+      return true;
     } catch (e) {
       console.error("Auto-backup failed", e);
+      return false;
     }
   }
 
-  document.getElementById("btn-export").addEventListener("click", async () => {
-    const data = await DB.exportAll();
-    downloadJSON(data, backupFilename());
-    toast("Backup exported");
+  onTap($("btn-export"), async () => {
+    toast((await autoBackup()) ? "Backup exported" : "Export failed \u2014 please try again");
   });
 
-  document.getElementById("btn-import").addEventListener("click", () => {
-    document.getElementById("import-file").click();
-  });
+  $("btn-import").addEventListener("click", () => $("import-file").click());
 
-  document.getElementById("import-file").addEventListener("change", async (e) => {
+  $("import-file").addEventListener("change", async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    if (!confirm("Importing will replace everything currently stored on this device. Continue?")) {
-      e.target.value = "";
-      return;
-    }
     try {
-      const text = await file.text();
-      const data = JSON.parse(text);
+      if (!(await isDatabaseEmpty()) && !confirm("Replace all data on this device with this backup?")) return;
+      let data;
+      try {
+        data = JSON.parse(await file.text());
+      } catch (_) {
+        throw new Error("The file isn't valid JSON. Nothing was changed.");
+      }
       await DB.importAll(data);
       toast("Backup restored");
-      renderNightsList();
-      renderPlayersList();
-      renderChipsList();
-      showView("nights");
+      openTab("nights");
     } catch (err) {
       alert("Couldn't import that file: " + err.message);
     } finally {
@@ -1016,31 +1085,68 @@
     });
   }
 
-  // ================= Exit confirmation =================
-  // Covers two cases a web app CAN intercept:
-  //  1) the in-app back gesture / hardware back button (via history + popstate)
-  //  2) closing the browser tab (via beforeunload)
-  // It cannot cover swiping an installed PWA away in Android's task switcher —
-  // that's an OS-level app-close action no web page can hook into, same as it
-  // would be for a native app being force-closed.
+  // ================= Android back gesture =================
+  // Back closes an open popup, otherwise steps back one screen; only on the
+  // Events home screen does it ask before leaving the app.
+  // (Swiping the app away in the task switcher can't be intercepted by any web app.)
   history.pushState({ rpcGuard: true }, "", location.href);
   window.addEventListener("popstate", () => {
-    if (confirm("Close Retro Poker Club?")) {
-      history.back();
-    } else {
-      history.pushState({ rpcGuard: true }, "", location.href);
+    if (isModalOpen()) {
+      closeModal();
+    } else if (!goBack()) {
+      if (confirm("Close Retro Poker Club?")) {
+        history.back();
+        return;
+      }
     }
+    history.pushState({ rpcGuard: true }, "", location.href);
   });
-  window.addEventListener("beforeunload", (e) => {
-    e.preventDefault();
-    e.returnValue = "";
-  });
+
+  // ================= Data protection =================
+  async function isDatabaseEmpty() {
+    const data = await DB.exportAll();
+    return !data.players.length && !data.nights.length && !data.chips.length;
+  }
+
+  // Ask Chrome to treat this app's storage as persistent, so it isn't
+  // silently evicted when the phone runs low on space. (A manual
+  // "Clear browsing data" still removes it — hence the restore prompt below.)
+  async function requestPersistentStorage() {
+    try {
+      if (navigator.storage && navigator.storage.persist && !(await navigator.storage.persisted())) {
+        await navigator.storage.persist();
+      }
+    } catch (_) {}
+  }
+
+  // Empty app (fresh install or Chrome data was cleared): offer a one-tap
+  // restore from the backup file in Downloads.
+  async function offerRestoreIfEmpty() {
+    if (!(await isDatabaseEmpty()) || pref.get(RESTORE_DISMISSED_KEY) === "1") return;
+    openModal(`
+      <h2>No data found</h2>
+      <p class="hint-text">Restore from a backup file? Auto-backups are in your Downloads folder.</p>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="m-cancel">Start fresh</button>
+        <button class="btn btn-gold" id="m-restore">Restore</button>
+      </div>
+    `);
+    $("m-cancel").addEventListener("click", () => {
+      pref.set(RESTORE_DISMISSED_KEY, "1");
+      closeModal();
+    });
+    $("m-restore").addEventListener("click", () => {
+      closeModal();
+      $("import-file").click();
+    });
+  }
 
   // ================= Init =================
   async function init() {
     await openDB();
-    showView("nights");
-    renderNightsList();
+    openTab("nights");
+    requestPersistentStorage();
+    offerRestoreIfEmpty();
   }
   init();
 })();
