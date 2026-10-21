@@ -506,3 +506,10 @@ button:disabled { opacity: 0.55; pointer-events: none; }
 }
 .switch:checked { background: var(--gold); border-color: var(--gold); }
 .switch:checked::after { transform: translateX(18px); }
+
+/* ============ Quick buy-ins ============ */
+.quick-amounts { display: flex; gap: 10px; margin-bottom: 16px; }
+.quick-amounts .btn { flex: 1; padding: 16px 0; font-size: 18px; }
+
+/* ============ Archived players ============ */
+.card.is-archived .card-title { color: var(--ink-soft); }

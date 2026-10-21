@@ -3,7 +3,7 @@
    answered within NETWORK_TIMEOUT_MS the cached copy is served instead, so a
    weak signal at the table doesn't leave you staring at a blank screen. */
 
-const CACHE_VERSION = "rpc-v2";
+const CACHE_VERSION = "rpc-v3";
 const NETWORK_TIMEOUT_MS = 3000;
 const PRECACHE_URLS = [
   "./",

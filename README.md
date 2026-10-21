@@ -22,3 +22,5 @@ A personal-use, offline-first PWA for tracking private poker events: buy-ins (wi
 - Buy-ins are entered directly in euros; the Chips tab is a reference sheet only (denomination → euro value, and how many of each you own) and doesn't affect calculations.
 - An event can be reopened after closing, in case you need to fix a mistake.
 - Tap the logo/name in the header from anywhere to jump back to the Events list.
+- Players are archived, never deleted: archived players are hidden from new events but keep their stats. Adding the same name again restores them.
+- Quick buy-ins: +€20 on each player row, and €20 / €40 buttons in the Add buy-in popup.

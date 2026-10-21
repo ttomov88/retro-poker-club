@@ -390,12 +390,16 @@
           </div>
           <div class="buyin-list">${chips}</div>
           <div class="player-actions">
+            <button class="btn btn-ghost-gold btn-sm btn-quick-buyin">+${fmtMoney(QUICK_BUYINS[0]).replace(".00", "")}</button>
             <button class="btn btn-ghost-gold btn-sm btn-add-buyin">+ Buy-in</button>
             <button class="btn btn-ghost btn-sm btn-remove-player">Remove</button>
           </div>
         </div>
       `);
-      row.querySelector(".btn-add-buyin").addEventListener("click", () => openBuyinModal(night.id, np.playerId));
+      onTap(row.querySelector(".btn-quick-buyin"), async () => {
+        if (await addBuyin(night.id, np.playerId, QUICK_BUYINS[0])) toast(`${fmtMoney(QUICK_BUYINS[0])} added for ${np.name}`);
+      });
+      row.querySelector(".btn-add-buyin").addEventListener("click", () => openBuyinModal(night.id, np.playerId, np.name));
       row.querySelectorAll(".buyin-chip").forEach((chipEl) => {
         chipEl.addEventListener("click", () => openEditBuyinModal(night.id, np.playerId, Number(chipEl.dataset.idx)));
       });
@@ -428,37 +432,52 @@
     });
   }
 
+  const QUICK_BUYINS = [20, 40];
+
+  async function addBuyin(nightId, playerId, amount) {
+    const night = await DB.get("nights", nightId);
+    const np = night && night.players.find((p) => p.playerId === playerId);
+    if (!np) return false;
+    np.buyins = np.buyins || [];
+    np.buyins.push({ amount, ts: Date.now() });
+    await DB.put("nights", night);
+    await refreshEvent(nightId);
+    return true;
+  }
+
   function readAmount(input) {
     const amount = round2(parseFloat(input.value));
     return amount > 0 ? amount : null;
   }
 
-  function openBuyinModal(nightId, playerId) {
+  function openBuyinModal(nightId, playerId, name) {
     openModal(`
-      <h2>Add buy-in</h2>
+      <h2>Add buy-in &mdash; ${escapeHtml(name)}</h2>
+      <div class="quick-amounts">
+        ${QUICK_BUYINS.map((v) => `<button type="button" class="btn btn-ghost-gold quick-amt" data-amt="${v}">${fmtMoney(v).replace(".00", "")}</button>`).join("")}
+      </div>
       <div class="field">
-        <label for="f-amount">Amount (EUR)</label>
+        <label for="f-amount">Other amount (EUR)</label>
         <input type="number" id="f-amount" inputmode="decimal" step="0.01" min="0" placeholder="0.00" class="amount-input">
       </div>
       <div class="modal-actions">
         <button class="btn btn-ghost" id="m-cancel">Cancel</button>
-        <button class="btn btn-gold" id="m-add">Add buy-in</button>
+        <button class="btn btn-gold" id="m-add">Add</button>
       </div>
     `);
-    const input = $("f-amount");
-    focusField(input);
+    // No auto-focus: the keyboard would cover the quick buttons.
     $("m-cancel").addEventListener("click", closeModal);
+    modalRoot.querySelectorAll(".quick-amt").forEach((btn) => {
+      onTap(btn, async () => {
+        closeModal();
+        await addBuyin(nightId, playerId, Number(btn.dataset.amt));
+      });
+    });
     onTap($("m-add"), async () => {
-      const amount = readAmount(input);
+      const amount = readAmount($("f-amount"));
       if (!amount) return toast("Enter an amount above zero");
-      const night = await DB.get("nights", nightId);
-      const np = night.players.find((p) => p.playerId === playerId);
-      if (!np) return closeModal();
-      np.buyins = np.buyins || [];
-      np.buyins.push({ amount, ts: Date.now() });
-      await DB.put("nights", night);
       closeModal();
-      await refreshEvent(nightId);
+      await addBuyin(nightId, playerId, amount);
     });
   }
 
@@ -509,7 +528,7 @@
     const night = await DB.get("nights", state.currentNightId);
     const roster = await DB.getAll("players");
     const already = new Set((night.players || []).map((p) => p.playerId));
-    const available = roster.filter((p) => !already.has(p.id)).sort((a, b) => a.name.localeCompare(b.name));
+    const available = roster.filter((p) => !already.has(p.id) && !p.archived).sort((a, b) => a.name.localeCompare(b.name));
 
     const picks = new Set();
     openModal(`
@@ -560,14 +579,12 @@
         if (existing && inEvent.has(existing.id)) {
           return toast(`${existing.name} is already in this event`);
         }
-        if (existing) {
-          // Name matches someone in the roster: reuse them, so their stats stay in one place.
-          if (!toAdd.some((p) => p.id === existing.id)) toAdd.push(existing);
-          note = `${existing.name} was already in your roster \u2014 added them`;
-        } else {
-          const newId = await DB.add("players", { name: newName, createdAt: Date.now() });
-          toAdd.push({ id: newId, name: newName });
-        }
+        // Reuse a roster match (un-archiving if needed) so stats stay in one place.
+        const { player, how } = await findOrCreatePlayer(newName);
+        if (!toAdd.some((p) => p.id === player.id)) toAdd.push(player);
+        if (how === "existing") note = `${player.name} was already in your roster \u2014 added them`;
+        if (how === "restored") note = `${player.name} restored from archive`;
+        if (how === "reconnected") note = `${player.name} reconnected to past results`;
       }
 
       toAdd.forEach((p) => freshNight.players.push({ playerId: p.id, name: p.name, buyins: [], cashOut: null, net: null }));
@@ -616,7 +633,7 @@
           </div>
           <div class="field-row">
             <label for="in-${np.playerId}">Cash-out</label>
-            <input type="number" inputmode="decimal" step="0.01" min="0" class="amount-input" id="in-${np.playerId}" placeholder="0.00">
+            <input type="number" inputmode="decimal" step="0.01" min="0" class="amount-input" id="in-${np.playerId}" placeholder="0.00" value="${np.cashOut != null ? escapeHtml(np.cashOut) : ""}">
           </div>
         </div>
       `);
@@ -730,48 +747,91 @@
     };
   }
 
-  async function confirmDeletePlayer(playerId) {
-    if (!confirm("Remove this player from the roster? Past event results stay in history.")) return false;
-    await DB.delete("players", playerId);
+  // Players are never deleted: archiving hides them from new events but
+  // keeps their stats. Re-adding the same name brings them back.
+  async function setArchived(playerId, archived) {
+    const player = await DB.get("players", playerId);
+    if (!player) return false;
+    if (archived && !confirm(`Archive ${player.name}? They'll be hidden from new events. Stats are kept.`)) return false;
+    player.archived = archived;
+    await DB.put("players", player);
+    toast(archived ? `${player.name} archived` : `${player.name} restored`);
     return true;
   }
+
+  // Finds a player by name or creates one. Reuses (and un-archives) a roster
+  // match, and reconnects to past results of a player who was deleted by an
+  // older version of the app, so stats never split into two people.
+  async function findOrCreatePlayer(name) {
+    const roster = await DB.getAll("players");
+    const existing = roster.find((p) => sameName(p.name, name));
+    if (existing) {
+      if (existing.archived) {
+        existing.archived = false;
+        await DB.put("players", existing);
+        return { player: existing, how: "restored" };
+      }
+      return { player: existing, how: "existing" };
+    }
+    const known = new Set(roster.map((p) => p.id));
+    for (const n of await DB.getAll("nights")) {
+      const orphan = (n.players || []).find((np) => !known.has(np.playerId) && sameName(np.name, name));
+      if (orphan) {
+        const player = { id: orphan.playerId, name: cleanName(name), createdAt: Date.now() };
+        await DB.put("players", player);
+        return { player, how: "reconnected" };
+      }
+    }
+    const id = await DB.add("players", { name, createdAt: Date.now() });
+    return { player: { id, name }, how: "new" };
+  }
+
+  const ARCHIVE_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path d="M4 7h16v3H4zM5.5 10v9h13v-9M10 13.5h4" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const RESTORE_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
   async function renderPlayersList() {
     const token = renderToken("players");
     const [roster, nights] = await Promise.all([DB.getAll("players"), DB.getAll("nights")]);
     if (isStale("players", token)) return;
 
-    const list = $("players-list");
-    list.innerHTML = "";
-    $("players-empty").hidden = roster.length > 0;
-
-    roster
+    const rows = roster
       .map((p) => ({ p, stats: playerStats(nights, p.id) }))
-      .sort((a, b) => a.p.name.localeCompare(b.p.name))
-      .forEach(({ p, stats }) => {
-        const card = el(`
-          <div class="card card-tappable">
-            <div class="card-row">
-              <div>
-                <div class="card-title">${escapeHtml(p.name)}</div>
-                <div class="card-sub">${stats.eventsPlayed} event${stats.eventsPlayed === 1 ? "" : "s"} played</div>
-              </div>
-              <div class="row-end">
-                <div class="money ${amountClass(stats.net)}">${fmtSigned(stats.net)}</div>
-                <button type="button" class="icon-btn icon-btn-sm btn-roster-delete" aria-label="Remove ${escapeHtml(p.name)} from roster">
-                  <svg viewBox="0 0 24 24" width="16" height="16"><path d="M6 7h12l-1 13.5a1.5 1.5 0 0 1-1.5 1.5h-7a1.5 1.5 0 0 1-1.5-1.5L6 7zm3-3h6l1 2H8l1-2zM4 7h16" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
-                </button>
-              </div>
+      .sort((a, b) => a.p.name.localeCompare(b.p.name));
+    const active = rows.filter((r) => !r.p.archived);
+    const archived = rows.filter((r) => r.p.archived);
+
+    $("players-empty").hidden = active.length > 0;
+    $("archived-head").hidden = archived.length === 0;
+    renderPlayerCards($("players-list"), active, false);
+    renderPlayerCards($("players-archived"), archived, true);
+  }
+
+  function renderPlayerCards(list, rows, isArchived) {
+    list.innerHTML = "";
+    rows.forEach(({ p, stats }) => {
+      const card = el(`
+        <div class="card card-tappable${isArchived ? " is-archived" : ""}">
+          <div class="card-row">
+            <div>
+              <div class="card-title">${escapeHtml(p.name)}</div>
+              <div class="card-sub">${stats.eventsPlayed} event${stats.eventsPlayed === 1 ? "" : "s"} played</div>
+            </div>
+            <div class="row-end">
+              <div class="money ${amountClass(stats.net)}">${fmtSigned(stats.net)}</div>
+              <button type="button" class="icon-btn icon-btn-sm btn-roster-archive" aria-label="${isArchived ? "Restore" : "Archive"} ${escapeHtml(p.name)}">
+                ${isArchived ? RESTORE_ICON : ARCHIVE_ICON}
+              </button>
             </div>
           </div>
-        `);
-        card.addEventListener("click", () => openPlayer(p.id));
-        onTap(card.querySelector(".btn-roster-delete"), async (e) => {
-          e.stopPropagation();
-          if (await confirmDeletePlayer(p.id)) renderPlayersList();
-        });
-        list.appendChild(card);
+        </div>
+      `);
+      card.addEventListener("click", () => openPlayer(p.id));
+      onTap(card.querySelector(".btn-roster-archive"), async (e) => {
+        e.stopPropagation();
+        if (await setArchived(p.id, !isArchived)) renderPlayersList();
       });
+      list.appendChild(card);
+    });
   }
 
   $("btn-add-player").addEventListener("click", () => {
@@ -792,11 +852,13 @@
     onTap($("m-add"), async () => {
       const name = cleanName(input.value);
       if (!name) return toast("Enter a name");
-      const existing = (await DB.getAll("players")).find((p) => sameName(p.name, name));
+      const existing = (await DB.getAll("players")).find((p) => sameName(p.name, name) && !p.archived);
       if (existing) return toast(`${existing.name} is already in the roster`);
-      await DB.add("players", { name, createdAt: Date.now() });
+      const { player, how } = await findOrCreatePlayer(name);
       closeModal();
       renderPlayersList();
+      if (how === "restored") toast(`${player.name} restored from archive`);
+      if (how === "reconnected") toast(`${player.name} reconnected to past results`);
     });
   });
 
@@ -807,6 +869,8 @@
 
     const stats = playerStats(nights, playerId);
     $("pd-name").textContent = player.name;
+    $("pd-archived").hidden = !player.archived;
+    $("btn-archive-player").textContent = player.archived ? "Restore to roster" : "Archive player";
 
     const statCards = [
       ["Events played", stats.eventsPlayed, ""],
@@ -880,8 +944,9 @@
     });
   });
 
-  onTap($("btn-delete-player"), async () => {
-    if (await confirmDeletePlayer(state.currentPlayerId)) openTab("players");
+  onTap($("btn-archive-player"), async () => {
+    const player = await DB.get("players", state.currentPlayerId);
+    if (player && (await setArchived(player.id, !player.archived))) renderPlayerDetail(player.id);
   });
 
   // ================= CHIPS =================
@@ -990,7 +1055,9 @@
   }
 
   function backupFilename() {
-    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, "0");
+    const stamp = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
     return `retro-poker-club-backup-${stamp}.json`;
   }
 

@@ -109,6 +109,8 @@
       </div>
       <div id="players-list" class="stack"></div>
       <p class="empty-msg" id="players-empty" hidden>No players in the roster yet.</p>
+      <div class="section-row" id="archived-head" hidden><h2>Archived</h2></div>
+      <div id="players-archived" class="stack"></div>
     </section>
 
     <!-- ---- Player detail ---- -->
@@ -117,6 +119,7 @@
         <button class="btn-back" aria-label="Back to players">&#8592;</button>
         <div class="view-head-title">
           <h1 id="pd-name">&nbsp;</h1>
+          <span class="badge is-closed" id="pd-archived" hidden>Archived</span>
           <button class="icon-btn" id="btn-edit-player-name" aria-label="Edit player name">
             <svg viewBox="0 0 24 24" width="17" height="17"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
           </button>
@@ -126,7 +129,7 @@
       <div class="section-row"><h2>Events played</h2></div>
       <div id="pd-nights" class="stack"></div>
       <p class="empty-msg" id="pd-nights-empty" hidden>Hasn't played an event yet.</p>
-      <button class="btn btn-ghost btn-block section-actions" id="btn-delete-player">Remove from roster</button>
+      <button class="btn btn-ghost btn-block section-actions" id="btn-archive-player">Archive player</button>
     </section>
 
     <!-- ---- Chips ---- -->
