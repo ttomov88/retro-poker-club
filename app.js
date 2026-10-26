@@ -740,9 +740,17 @@
   // ================= PLAYERS =================
   // Pure function: stats for one player from an already-loaded list of events.
   // Only closed events count (open ones have no result yet).
+  const MIN_EVENTS_FOR_RATES = 3; // below this, ROI / win rate are shown as unreliable
+
+  function fmtPct(v, signed) {
+    if (v === null || v === undefined) return "\u2014";
+    const r = Math.round(v);
+    return (signed && r > 0 ? "+" : "") + r + "%";
+  }
+
   function playerStats(nights, playerId) {
     let eventsPlayed = 0, totalBuyIn = 0, totalCashOut = 0, net = 0;
-    let biggestWin = null, biggestLoss = null;
+    let biggestWin = null, biggestLoss = null, eventsWon = 0;
     const history = [];
 
     nights.forEach((n) => {
@@ -754,6 +762,7 @@
       totalBuyIn += buyinTotal(np);
       totalCashOut += Number(np.cashOut || 0);
       net += pNet;
+      if (pNet > 0.004) eventsWon++;
       if (pNet > 0 && (biggestWin === null || pNet > biggestWin)) biggestWin = pNet;
       if (pNet < 0 && (biggestLoss === null || pNet < biggestLoss)) biggestLoss = pNet;
       history.push({ nightId: n.id, date: n.date, net: pNet });
@@ -768,6 +777,11 @@
       net: round2(net),
       biggestWin: biggestWin === null ? null : round2(biggestWin),
       biggestLoss: biggestLoss === null ? null : round2(biggestLoss),
+      eventsWon,
+      // ROI: net result per euro bought in. Win rate: share of events finished in profit.
+      roi: totalBuyIn > 0 ? (net / totalBuyIn) * 100 : null,
+      winRate: eventsPlayed > 0 ? (eventsWon / eventsPlayed) * 100 : null,
+      fewEvents: eventsPlayed < MIN_EVENTS_FOR_RATES,
       history,
     };
   }
@@ -842,7 +856,10 @@
               <div class="card-sub">${stats.eventsPlayed} event${stats.eventsPlayed === 1 ? "" : "s"} played</div>
             </div>
             <div class="row-end">
-              <div class="money ${amountClass(stats.net)}">${fmtSigned(stats.net)}</div>
+              <div class="money-stack">
+                <div class="money ${amountClass(stats.net)}">${fmtSigned(stats.net)}</div>
+                ${stats.roi === null ? "" : `<div class="card-sub">ROI ${fmtPct(stats.roi, true)}</div>`}
+              </div>
               <button type="button" class="icon-btn icon-btn-sm btn-roster-archive" aria-label="${isArchived ? "Restore" : "Archive"} ${escapeHtml(p.name)}">
                 ${isArchived ? RESTORE_ICON : ARCHIVE_ICON}
               </button>
@@ -904,6 +921,12 @@
       ["Total cash-out", fmtMoney(stats.totalCashOut), ""],
       ["Biggest win", stats.biggestWin === null ? "\u2014" : fmtSigned(stats.biggestWin), "amount-pos"],
       ["Biggest loss", stats.biggestLoss === null ? "\u2014" : fmtSigned(stats.biggestLoss), "amount-neg"],
+      ["ROI (return on investment)",
+        fmtPct(stats.roi, true) + (stats.fewEvents && stats.roi !== null ? ' <span class="stat-note">few events</span>' : ""),
+        stats.roi === null || stats.fewEvents ? "amount-zero" : amountClass(stats.roi)],
+      ["Win rate",
+        stats.winRate === null ? "\u2014" : `${fmtPct(stats.winRate)} <span class="stat-note">${stats.eventsWon} of ${stats.eventsPlayed}${stats.fewEvents ? " \u00B7 few events" : ""}</span>`,
+        stats.fewEvents ? "amount-zero" : ""],
     ];
     $("pd-stats").innerHTML = statCards
       .map(([label, value, cls]) => `
@@ -1352,23 +1375,31 @@
   function drawStatsImage(rows, eventCount) {
     const c = palette();
     const PAD = 28, ROW = 44;
-    // Column order: who → how often → money in → money out (sort key) → extremes → bottom line
+    // Column order: who → how often → money in → money out → extremes → bottom line (sort key)
     const cols = [
       { key: "rank", label: "#", w: 30, align: "left" },
       { key: "name", label: "Player", w: 170, align: "left" },
       { key: "events", label: "Events", w: 64, align: "right" },
       { key: "totalBuyIn", label: "Total buy-in", w: 104, align: "right", money: true },
       { key: "avgBuyIn", label: "Avg buy-in", w: 96, align: "right", money: true },
-      { key: "totalCashOut", label: "Total cash-out ▾", w: 124, align: "right", money: true, sort: true },
+      { key: "totalCashOut", label: "Total cash-out", w: 124, align: "right", money: true },
       { key: "avgCashOut", label: "Avg cash-out", w: 104, align: "right", money: true },
       { key: "biggestWin", label: "Biggest win", w: 100, align: "right", signed: true },
       { key: "biggestLoss", label: "Biggest loss", w: 100, align: "right", signed: true },
-      { key: "net", label: "Net", w: 108, align: "right", signed: true, strong: true },
+      { key: "net", label: "Net ▾", w: 108, align: "right", signed: true, strong: true, sort: true },
+      { key: "roi", label: "ROI", w: 80, align: "right", pct: true },
+      { key: "winRate", label: "Win rate", w: 118, align: "right", pct: true },
     ];
     const tableW = cols.reduce((s, col) => s + col.w, 0) + 24;
     const W = tableW + PAD * 2;
     const listTop = 150;
-    const H = listTop + 40 + rows.length * ROW + 52;
+    const notes = [
+      ["ROI (return on investment)", "net result \u00F7 total buy-in: how much a player wins or loses per euro bought in."],
+      ["Win rate", "share of events a player finished in profit."],
+    ];
+    if (rows.some((r) => r.fewEvents)) notes.push(["*", `fewer than ${MIN_EVENTS_FOR_RATES} events, too few to be reliable.`]);
+    const NOTE_LINE = 20;
+    const H = listTop + 40 + rows.length * ROW + 34 + notes.length * NOTE_LINE + 30;
     const { canvas, ctx } = makeCanvas(W, H);
 
     ctx.fillStyle = c.bg;
@@ -1403,15 +1434,28 @@
         if (col.key === "rank") str = String(i + 1);
         else if (col.key === "name") { str = v; color = c.ink; font = `700 16px ${SANS}`; }
         else if (col.key === "events") { str = String(v); color = c.ink; }
-        else if (col.signed) { str = v === null ? "—" : fmtSigned(v); color = v === null ? c.soft : netColor(c, v); }
+        else if (col.key === "roi") {
+          str = fmtPct(v, true) + (r.fewEvents && v !== null ? "*" : "");
+          color = v === null || r.fewEvents ? c.soft : netColor(c, v);
+        } else if (col.key === "winRate") {
+          str = v === null ? "\u2014" : `${fmtPct(v)} (${r.eventsWon}/${r.events})` + (r.fewEvents ? "*" : "");
+          color = r.fewEvents ? c.soft : c.ink;
+        } else if (col.signed) { str = v === null ? "—" : fmtSigned(v); color = v === null ? c.soft : netColor(c, v); }
         else str = fmtMoney(v);
-        if (col.sort) { color = c.ink; font = `600 15px ${SANS}`; }
         if (col.strong) font = `700 16px ${SANS}`;
         text(ctx, str, col.x, mid, { font, color, align: col.align, max: col.key === "name" ? col.w - 12 : undefined });
       });
     });
 
-    text(ctx, "Archived players not shown", PAD, H - 24, { font: `12px ${SANS}`, color: c.soft });
+    // short explanation under the table
+    let ny = listTop + 40 + rows.length * ROW + 30;
+    notes.forEach(([term, def]) => {
+      text(ctx, term, PAD, ny, { font: `700 13px ${SANS}`, color: c.ink });
+      const tw = ctx.measureText(term).width;
+      text(ctx, " \u2014 " + def.replace(/^\u2014 /, ""), PAD + tw, ny, { font: `13px ${SANS}`, color: c.soft });
+      ny += NOTE_LINE;
+    });
+    text(ctx, "Archived players not shown", PAD, ny + 4, { font: `12px ${SANS}`, color: c.soft });
     return canvas;
   }
 
@@ -1430,11 +1474,15 @@
           avgCashOut: s.eventsPlayed ? round2(s.totalCashOut / s.eventsPlayed) : 0,
           biggestWin: s.biggestWin,
           biggestLoss: s.biggestLoss,
+          roi: s.roi,
+          winRate: s.winRate,
+          eventsWon: s.eventsWon,
+          fewEvents: s.fewEvents,
           net: s.net,
         };
       })
       .filter((r) => r.events > 0)
-      .sort((a, b) => b.totalCashOut - a.totalCashOut || b.net - a.net || a.name.localeCompare(b.name));
+      .sort((a, b) => b.net - a.net || b.totalCashOut - a.totalCashOut || a.name.localeCompare(b.name));
     if (!rows.length) return toast("No closed events yet — nothing to share");
     await fontsReady();
     const eventCount = nights.filter((n) => n.status === "closed").length;

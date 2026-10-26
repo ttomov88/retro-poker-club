@@ -23,6 +23,6 @@ A personal-use, offline-first PWA for tracking private poker events: buy-ins (wi
 - An event can be reopened after closing, in case you need to fix a mistake.
 - Tap the logo/name in the header from anywhere to jump back to the Events list.
 - Players are archived, never deleted: archived players are hidden from new events but keep their stats. Adding the same name again restores them.
-- Share: closed events have a Share button (results image), and the Players screen has Share (all-time stats image, sorted by total cash-out). Images open Android's share sheet, or download if sharing isn't available.
+- Share: closed events have a Share button (results image), and the Players screen has Share (all-time stats image incl. ROI and win rate, sorted by net result). Images open Android's share sheet, or download if sharing isn't available.
 - Close-out shows a live counter (cashed out / total buy-ins) and each player's result as you type.
 - Quick buy-ins: +€20 on each player row, and €20 / €40 buttons in the Add buy-in popup.

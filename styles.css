@@ -535,3 +535,8 @@ button:disabled { opacity: 0.55; pointer-events: none; }
 
 /* on the close-out screen, show messages above the pinned counter */
 body[data-view="closeout"] .toast { bottom: calc(var(--tabbar-h, 60px) + 112px); }
+
+/* ROI / win rate */
+.money-stack { text-align: right; }
+.money-stack .card-sub { margin-top: 1px; }
+.stat-note { font-size: 12px; font-weight: 500; color: var(--ink-soft); }
