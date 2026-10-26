@@ -126,6 +126,8 @@
   // ================= Navigation =================
   function showView(name) {
     state.currentView = name;
+    document.body.dataset.view = name;
+    $("toast").hidden = true; // don't carry a message over to the next screen
     document.querySelectorAll(".view").forEach((v) => v.classList.toggle("is-active", v.id === "view-" + name));
     if (TAB_ROOTS.includes(name)) {
       state.currentTab = name;
@@ -181,6 +183,12 @@
         return false;
     }
   }
+
+  function syncTabbarHeight() {
+    document.documentElement.style.setProperty("--tabbar-h", $("tabbar").offsetHeight + "px");
+  }
+  window.addEventListener("resize", syncTabbarHeight);
+  syncTabbarHeight();
 
   document.querySelectorAll(".tab-btn").forEach((btn) => btn.addEventListener("click", () => openTab(btn.dataset.tab)));
   document.querySelectorAll(".btn-back").forEach((btn) => btn.addEventListener("click", goBack));
@@ -355,7 +363,7 @@
     $("nd-pot-hero").querySelector(".pot-hero-label").textContent = isOpen ? "Total buy-ins" : "Total buy-ins (final)";
 
     $("nd-open-actions").hidden = !isOpen;
-    $("btn-add-player-to-night").hidden = !isOpen;
+    $("nd-players-head").hidden = !isOpen;
     $("nd-closed-summary").hidden = isOpen;
 
     if (isOpen) {
@@ -634,6 +642,7 @@
           <div class="field-row">
             <label for="in-${np.playerId}">Cash-out</label>
             <input type="number" inputmode="decimal" step="0.01" min="0" class="amount-input" id="in-${np.playerId}" placeholder="0.00" value="${np.cashOut != null ? escapeHtml(np.cashOut) : ""}">
+            <span class="co-net" id="net-${np.playerId}"></span>
           </div>
         </div>
       `);
@@ -662,26 +671,42 @@
 
   function updateCloseoutCheck(night) {
     const rows = readCloseoutRows(night);
+    const pot = nightPotTotal(night);
+    const cashed = round2(rows.reduce((s, r) => s + (r.cashOut || 0), 0));
+    const filled = rows.filter((r) => r.net !== null).length;
+    const diff = round2(cashed - pot);
+
+    // live result next to each player's field
+    rows.forEach((r) => {
+      const out = $(`net-${r.playerId}`);
+      if (!out) return;
+      out.textContent = r.net === null ? "" : fmtSigned(r.net);
+      out.className = "co-net " + (r.net === null ? "" : amountClass(r.net));
+    });
+
+    $("co-total").textContent = fmtMoney(cashed);
+    $("co-pot").textContent = fmtMoney(pot);
+    $("co-fill").style.width = (pot > 0 ? Math.min(100, (cashed / pot) * 100) : 0) + "%";
+    $("co-count").textContent = `${filled} of ${rows.length} players entered`;
+
     const check = $("closeout-check");
+    const status = $("co-status");
     const negative = rows.find((r) => r.negative);
     if (negative) {
       check.className = "closeout-check is-off";
-      check.textContent = `Cash-out can't be negative (${negative.name})`;
-      return;
-    }
-    const filled = rows.filter((r) => r.net !== null);
-    if (filled.length < rows.length) {
-      check.className = "closeout-check";
-      check.textContent = `${filled.length} of ${rows.length} players entered`;
-      return;
-    }
-    const sumNet = round2(rows.reduce((s, r) => s + r.net, 0));
-    if (Math.abs(sumNet) < 0.005) {
-      check.className = "closeout-check is-balanced";
-      check.textContent = "Balanced \u2713 \u2014 buy-ins match cash-outs";
-    } else {
+      status.textContent = `Negative for ${negative.name}`;
+    } else if (diff > 0.005) {
       check.className = "closeout-check is-off";
-      check.textContent = `Off by ${fmtMoney(Math.abs(sumNet))} \u2014 ${sumNet > 0 ? "more cashed out than bought in" : "less cashed out than bought in"}`;
+      status.textContent = `${fmtMoney(diff)} too much`;
+    } else if (Math.abs(diff) < 0.005 && filled === rows.length) {
+      check.className = "closeout-check is-balanced";
+      status.textContent = "Balanced \u2713";
+    } else if (filled === rows.length) {
+      check.className = "closeout-check is-off";
+      status.textContent = `${fmtMoney(-diff)} missing`;
+    } else {
+      check.className = "closeout-check";
+      status.textContent = `${fmtMoney(-diff)} left`;
     }
   }
 
@@ -1136,13 +1161,284 @@
         throw new Error("The file isn't valid JSON. Nothing was changed.");
       }
       await DB.importAll(data);
-      toast("Backup restored");
       openTab("nights");
+      toast("Backup restored");
     } catch (err) {
       alert("Couldn't import that file: " + err.message);
     } finally {
       e.target.value = "";
     }
+  });
+
+  // ================= Share as image =================
+  // Images are drawn on a canvas in the app's own colors and fonts, then
+  // handed to Android's share sheet (Viber, WhatsApp, …). If sharing files
+  // isn't supported, the PNG is downloaded instead.
+  function themeColor(name, fallback) {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+  }
+  function palette() {
+    return {
+      bg: themeColor("--bg", "#FAF8F4"),
+      surface: themeColor("--surface", "#FFFFFF"),
+      raised: themeColor("--surface-raised", "#F3F1EA"),
+      line: themeColor("--line", "#E2DFD4"),
+      ink: themeColor("--ink", "#1B1C19"),
+      soft: themeColor("--ink-soft", "#54554D"),
+      gold: themeColor("--gold", "#BC9D58"),
+      goldDeep: themeColor("--gold-deep", "#8A6E2F"),
+      loss: themeColor("--loss", "#A3402F"),
+    };
+  }
+  const SERIF = "'Source Serif 4', Georgia, serif";
+  const SANS = "Inter, Roboto, Arial, sans-serif";
+
+  async function fontsReady() {
+    try {
+      if (!document.fonts) return;
+      await Promise.race([
+        Promise.all([
+          document.fonts.load(`600 30px ${SERIF}`),
+          document.fonts.load(`700 16px ${SANS}`),
+          document.fonts.load(`400 16px ${SANS}`),
+        ]),
+        new Promise((r) => setTimeout(r, 1500)), // offline: don't wait forever
+      ]);
+    } catch (_) {}
+  }
+
+  const SCALE = 2; // draw at 2x so text stays sharp when zoomed in a chat
+  function makeCanvas(width, height) {
+    const canvas = document.createElement("canvas");
+    canvas.width = width * SCALE;
+    canvas.height = height * SCALE;
+    const ctx = canvas.getContext("2d");
+    ctx.scale(SCALE, SCALE);
+    ctx.textBaseline = "middle";
+    return { canvas, ctx };
+  }
+
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function fitText(ctx, text, maxWidth) {
+    text = String(text);
+    if (ctx.measureText(text).width <= maxWidth) return text;
+    while (text.length > 1 && ctx.measureText(text + "…").width > maxWidth) text = text.slice(0, -1);
+    return text + "…";
+  }
+
+  function text(ctx, str, x, y, { font, color, align = "left", max } = {}) {
+    if (font) ctx.font = font;
+    if (color) ctx.fillStyle = color;
+    ctx.textAlign = align;
+    ctx.fillText(max ? fitText(ctx, str, max) : str, x, y);
+  }
+
+  function netColor(c, v) {
+    return v > 0.004 ? c.goldDeep : v < -0.004 ? c.loss : c.soft;
+  }
+
+  // Shared header: spade + app name on the left, small note on the right
+  function drawBrand(ctx, c, width, pad, rightNote) {
+    text(ctx, "♠", pad, 34, { font: `22px ${SERIF}`, color: c.goldDeep });
+    text(ctx, "Retro Poker Club", pad + 26, 35, { font: `500 17px ${SERIF}`, color: c.ink });
+    if (rightNote) text(ctx, rightNote, width - pad, 35, { font: `13px ${SANS}`, color: c.soft, align: "right" });
+    ctx.fillStyle = c.line;
+    ctx.fillRect(pad, 58, width - pad * 2, 1);
+  }
+
+  function slug(s) {
+    return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "event";
+  }
+
+  async function shareCanvas(canvas, filename, title) {
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+    if (!blob) throw new Error("Couldn't create the image");
+    const file = new File([blob], filename, { type: "image/png" });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title });
+        return;
+      } catch (err) {
+        if (err && err.name === "AbortError") return; // user closed the share sheet
+        // anything else: fall through to download
+      }
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    toast("Image saved to Downloads");
+  }
+
+  // ---- Closed event results ----
+  function drawEventImage(night) {
+    const c = palette();
+    const W = 540, PAD = 28, ROW = 46;
+    const rows = (night.players || [])
+      .map((np) => ({ name: np.name, in: buyinTotal(np), out: Number(np.cashOut || 0), net: Number(np.net || 0) }))
+      .sort((a, b) => b.net - a.net);
+    const listTop = 248;
+    const H = listTop + 34 + rows.length * ROW + 28;
+    const { canvas, ctx } = makeCanvas(W, H);
+
+    ctx.fillStyle = c.bg;
+    ctx.fillRect(0, 0, W, H);
+    drawBrand(ctx, c, W, PAD, "Event results");
+
+    text(ctx, fmtDate(night.date), PAD, 92, { font: `600 26px ${SERIF}`, color: c.ink, max: W - PAD * 2 });
+    if (night.location) text(ctx, night.location, PAD, 122, { font: `15px ${SANS}`, color: c.soft, max: W - PAD * 2 });
+
+    // total buy-ins card
+    const cardY = 146;
+    roundRect(ctx, PAD, cardY, W - PAD * 2, 76, 12);
+    ctx.fillStyle = c.surface;
+    ctx.fill();
+    ctx.strokeStyle = c.gold;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    text(ctx, "Total buy-ins", PAD + 16, cardY + 24, { font: `13px ${SANS}`, color: c.soft });
+    text(ctx, fmtMoney(nightPotTotal(night)), PAD + 16, cardY + 52, { font: `600 28px ${SERIF}`, color: c.goldDeep });
+    text(ctx, `${rows.length} player${rows.length === 1 ? "" : "s"}`, W - PAD - 16, cardY + 52, { font: `14px ${SANS}`, color: c.soft, align: "right" });
+
+    // results table
+    const colIn = W - PAD - 250, colOut = W - PAD - 140, colNet = W - PAD - 12;
+    const headY = listTop + 12;
+    ctx.font = `600 12px ${SANS}`;
+    ctx.fillStyle = c.soft;
+    text(ctx, "Player", PAD + 12, headY);
+    text(ctx, "In", colIn, headY, { align: "right" });
+    text(ctx, "Out", colOut, headY, { align: "right" });
+    text(ctx, "Net", colNet, headY, { align: "right" });
+
+    rows.forEach((r, i) => {
+      const y = listTop + 34 + i * ROW;
+      if (i % 2 === 0) {
+        roundRect(ctx, PAD, y, W - PAD * 2, ROW, 8);
+        ctx.fillStyle = c.surface;
+        ctx.fill();
+      }
+      const mid = y + ROW / 2;
+      text(ctx, r.name, PAD + 12, mid, { font: `700 16px ${SANS}`, color: c.ink, max: colIn - PAD - 70 });
+      text(ctx, fmtMoney(r.in), colIn, mid, { font: `15px ${SANS}`, color: c.soft, align: "right" });
+      text(ctx, fmtMoney(r.out), colOut, mid, { font: `15px ${SANS}`, color: c.soft, align: "right" });
+      text(ctx, fmtSigned(r.net), colNet, mid, { font: `700 16px ${SANS}`, color: netColor(c, r.net), align: "right" });
+    });
+    return canvas;
+  }
+
+  onTap($("btn-share-event"), async () => {
+    const night = await DB.get("nights", state.currentNightId);
+    if (!night) return;
+    await fontsReady();
+    const canvas = drawEventImage(night);
+    await shareCanvas(canvas, `poker-${night.date}-${slug(night.location)}.png`, `Poker — ${fmtDate(night.date)}`);
+  });
+
+  // ---- All-time player stats ----
+  function drawStatsImage(rows, eventCount) {
+    const c = palette();
+    const PAD = 28, ROW = 44;
+    // Column order: who → how often → money in → money out (sort key) → extremes → bottom line
+    const cols = [
+      { key: "rank", label: "#", w: 30, align: "left" },
+      { key: "name", label: "Player", w: 170, align: "left" },
+      { key: "events", label: "Events", w: 64, align: "right" },
+      { key: "totalBuyIn", label: "Total buy-in", w: 104, align: "right", money: true },
+      { key: "avgBuyIn", label: "Avg buy-in", w: 96, align: "right", money: true },
+      { key: "totalCashOut", label: "Total cash-out ▾", w: 124, align: "right", money: true, sort: true },
+      { key: "avgCashOut", label: "Avg cash-out", w: 104, align: "right", money: true },
+      { key: "biggestWin", label: "Biggest win", w: 100, align: "right", signed: true },
+      { key: "biggestLoss", label: "Biggest loss", w: 100, align: "right", signed: true },
+      { key: "net", label: "Net", w: 108, align: "right", signed: true, strong: true },
+    ];
+    const tableW = cols.reduce((s, col) => s + col.w, 0) + 24;
+    const W = tableW + PAD * 2;
+    const listTop = 150;
+    const H = listTop + 40 + rows.length * ROW + 52;
+    const { canvas, ctx } = makeCanvas(W, H);
+
+    ctx.fillStyle = c.bg;
+    ctx.fillRect(0, 0, W, H);
+    drawBrand(ctx, c, W, PAD, fmtDate(todayISO()));
+    text(ctx, "All-time player stats", PAD, 94, { font: `600 26px ${SERIF}`, color: c.ink });
+    text(ctx, `${rows.length} players · ${eventCount} event${eventCount === 1 ? "" : "s"}`, PAD, 124, { font: `14px ${SANS}`, color: c.soft });
+
+    // column x positions (left edge / right edge for right-aligned)
+    let x = PAD + 12;
+    cols.forEach((col) => {
+      col.x = col.align === "right" ? x + col.w - 8 : x;
+      x += col.w;
+    });
+
+    const headY = listTop + 18;
+    cols.forEach((col) => {
+      text(ctx, col.label, col.x, headY, { font: `600 12px ${SANS}`, color: col.sort ? c.goldDeep : c.soft, align: col.align });
+    });
+
+    rows.forEach((r, i) => {
+      const y = listTop + 40 + i * ROW;
+      if (i % 2 === 0) {
+        roundRect(ctx, PAD, y, tableW, ROW, 8);
+        ctx.fillStyle = c.surface;
+        ctx.fill();
+      }
+      const mid = y + ROW / 2;
+      cols.forEach((col) => {
+        const v = r[col.key];
+        let str, color = c.soft, font = `15px ${SANS}`;
+        if (col.key === "rank") str = String(i + 1);
+        else if (col.key === "name") { str = v; color = c.ink; font = `700 16px ${SANS}`; }
+        else if (col.key === "events") { str = String(v); color = c.ink; }
+        else if (col.signed) { str = v === null ? "—" : fmtSigned(v); color = v === null ? c.soft : netColor(c, v); }
+        else str = fmtMoney(v);
+        if (col.sort) { color = c.ink; font = `600 15px ${SANS}`; }
+        if (col.strong) font = `700 16px ${SANS}`;
+        text(ctx, str, col.x, mid, { font, color, align: col.align, max: col.key === "name" ? col.w - 12 : undefined });
+      });
+    });
+
+    text(ctx, "Archived players not shown", PAD, H - 24, { font: `12px ${SANS}`, color: c.soft });
+    return canvas;
+  }
+
+  onTap($("btn-share-players"), async () => {
+    const [roster, nights] = await Promise.all([DB.getAll("players"), DB.getAll("nights")]);
+    const rows = roster
+      .filter((p) => !p.archived)
+      .map((p) => {
+        const s = playerStats(nights, p.id);
+        return {
+          name: p.name,
+          events: s.eventsPlayed,
+          totalBuyIn: s.totalBuyIn,
+          avgBuyIn: s.eventsPlayed ? round2(s.totalBuyIn / s.eventsPlayed) : 0,
+          totalCashOut: s.totalCashOut,
+          avgCashOut: s.eventsPlayed ? round2(s.totalCashOut / s.eventsPlayed) : 0,
+          biggestWin: s.biggestWin,
+          biggestLoss: s.biggestLoss,
+          net: s.net,
+        };
+      })
+      .filter((r) => r.events > 0)
+      .sort((a, b) => b.totalCashOut - a.totalCashOut || b.net - a.net || a.name.localeCompare(b.name));
+    if (!rows.length) return toast("No closed events yet — nothing to share");
+    await fontsReady();
+    const eventCount = nights.filter((n) => n.status === "closed").length;
+    await shareCanvas(drawStatsImage(rows, eventCount), `poker-stats-${todayISO()}.png`, "Poker — all-time stats");
   });
 
   // ================= Service worker =================

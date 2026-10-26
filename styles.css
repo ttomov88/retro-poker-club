@@ -311,19 +311,35 @@ main#views {
 .closeout-row .field-row label { font-size: 13px; color: var(--ink-soft); width: 72px; flex-shrink: 0; }
 .closeout-row input { flex: 1; min-width: 0; width: 100%; }
 
+/* Running cash-out counter: pinned above the tab bar while you type */
 .closeout-check {
+  position: sticky;
+  bottom: calc(var(--tabbar-h, 60px) + 8px);
+  z-index: 15;
   margin-top: 16px;
   padding: 12px 14px;
-  border-radius: var(--radius-s);
-  font-size: 13.5px;
-  font-weight: 600;
-  text-align: center;
+  border-radius: var(--radius-m);
   background: var(--surface);
   border: 1px solid var(--line);
+  box-shadow: 0 4px 16px rgba(27, 28, 25, 0.10);
   color: var(--ink-soft);
+  font-size: 14px;
 }
-.closeout-check.is-balanced { border-color: var(--gold-soft); color: var(--gold-deep); background: var(--gold-tint); }
-.closeout-check.is-off { border-color: var(--loss); color: var(--loss); background: var(--loss-bg); }
+.co-line { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.co-line strong { color: var(--ink); font-variant-numeric: tabular-nums; }
+#co-pot { font-variant-numeric: tabular-nums; }
+#co-status { font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.co-bar { height: 6px; margin: 9px 0 6px; border-radius: 3px; background: var(--surface-raised); overflow: hidden; }
+#co-fill { display: block; height: 100%; width: 0; background: var(--gold); border-radius: 3px; transition: width 150ms ease; }
+.co-sub { font-size: 12.5px; }
+.closeout-check.is-balanced { border-color: var(--gold); background: var(--gold-tint); }
+.closeout-check.is-balanced #co-status { color: var(--gold-deep); }
+.closeout-check.is-off { border-color: var(--loss); }
+.closeout-check.is-off #co-status { color: var(--loss); }
+.closeout-check.is-off #co-fill { background: var(--loss); }
+
+/* live result per player while typing cash-outs */
+.co-net { font-weight: 700; font-size: 14px; font-variant-numeric: tabular-nums; min-width: 64px; text-align: right; }
 
 /* ============ Stat grid (player detail) ============ */
 .stat-grid {
@@ -513,3 +529,9 @@ button:disabled { opacity: 0.55; pointer-events: none; }
 
 /* ============ Archived players ============ */
 .card.is-archived .card-title { color: var(--ink-soft); }
+
+/* buttons with a leading icon */
+.btn-icon { display: inline-flex; align-items: center; gap: 6px; }
+
+/* on the close-out screen, show messages above the pinned counter */
+body[data-view="closeout"] .toast { bottom: calc(var(--tabbar-h, 60px) + 112px); }
