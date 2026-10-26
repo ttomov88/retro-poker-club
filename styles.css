@@ -137,8 +137,6 @@ main#views {
   color: var(--ink-soft);
 }
 .icon-btn:active { background: var(--surface); color: var(--gold-deep); }
-.icon-btn-sm { width: 28px; height: 28px; }
-.icon-btn-sm:active { color: var(--loss); }
 
 .pot-strip {
   display: flex;
@@ -537,6 +535,4 @@ button:disabled { opacity: 0.55; pointer-events: none; }
 body[data-view="closeout"] .toast { bottom: calc(var(--tabbar-h, 60px) + 112px); }
 
 /* ROI / win rate */
-.money-stack { text-align: right; }
-.money-stack .card-sub { margin-top: 1px; }
 .stat-note { font-size: 12px; font-weight: 500; color: var(--ink-soft); }

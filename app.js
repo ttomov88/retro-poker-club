@@ -825,8 +825,6 @@
     return { player: { id, name }, how: "new" };
   }
 
-  const ARCHIVE_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path d="M4 7h16v3H4zM5.5 10v9h13v-9M10 13.5h4" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-  const RESTORE_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
   async function renderPlayersList() {
     const token = renderToken("players");
@@ -851,27 +849,12 @@
       const card = el(`
         <div class="card card-tappable${isArchived ? " is-archived" : ""}">
           <div class="card-row">
-            <div>
-              <div class="card-title">${escapeHtml(p.name)}</div>
-              <div class="card-sub">${stats.eventsPlayed} event${stats.eventsPlayed === 1 ? "" : "s"} played</div>
-            </div>
-            <div class="row-end">
-              <div class="money-stack">
-                <div class="money ${amountClass(stats.net)}">${fmtSigned(stats.net)}</div>
-                ${stats.roi === null ? "" : `<div class="card-sub">ROI ${fmtPct(stats.roi, true)}</div>`}
-              </div>
-              <button type="button" class="icon-btn icon-btn-sm btn-roster-archive" aria-label="${isArchived ? "Restore" : "Archive"} ${escapeHtml(p.name)}">
-                ${isArchived ? RESTORE_ICON : ARCHIVE_ICON}
-              </button>
-            </div>
+            <div class="card-title">${escapeHtml(p.name)}</div>
+            <div class="money ${amountClass(stats.net)}">${fmtSigned(stats.net)}</div>
           </div>
         </div>
       `);
       card.addEventListener("click", () => openPlayer(p.id));
-      onTap(card.querySelector(".btn-roster-archive"), async (e) => {
-        e.stopPropagation();
-        if (await setArchived(p.id, !isArchived)) renderPlayersList();
-      });
       list.appendChild(card);
     });
   }
