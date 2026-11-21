@@ -328,6 +328,52 @@
     });
   }
 
+  // ---- How the money is settled: cash on the table, or players pay each other after ----
+  const SETTLE_LABEL = { cash: "Cash on the table", transfer: "Pay each other" };
+  const settleMode = (night) => (night && night.settle === "transfer" ? "transfer" : "cash");
+
+  function settleSwitch(current) {
+    return `
+      <div class="field">
+        <label>Money</label>
+        <div class="seg" id="f-settle">
+          <button type="button" class="btn btn-ghost${current === "cash" ? " is-on" : ""}" data-settle="cash">${SETTLE_LABEL.cash}</button>
+          <button type="button" class="btn btn-ghost${current === "transfer" ? " is-on" : ""}" data-settle="transfer">${SETTLE_LABEL.transfer}</button>
+        </div>
+      </div>`;
+  }
+  function bindSettleSwitch() {
+    const wrap = $("f-settle");
+    wrap.querySelectorAll("button").forEach((b) =>
+      b.addEventListener("click", () => wrap.querySelectorAll("button").forEach((x) => x.classList.toggle("is-on", x === b)))
+    );
+    return () => wrap.querySelector(".is-on").dataset.settle;
+  }
+
+  // Fewest payments that settle an event: biggest loser pays biggest winner, repeat.
+  // Works in cents so rounding never leaves a stray cent. Each payment has a key
+  // (payer > receiver : cents) used to remember it as paid; if the results are
+  // changed later, the key changes and the tick disappears, as it should.
+  function settleTransfers(night) {
+    const people = (night.players || []).map((np) => ({ id: np.playerId, name: np.name, c: Math.round(Number(np.net || 0) * 100) }));
+    const order = (a, b) => b.c - a.c || a.name.localeCompare(b.name);
+    const payers = people.filter((p) => p.c < 0).map((p) => ({ ...p, c: -p.c }));
+    const receivers = people.filter((p) => p.c > 0);
+    const out = [];
+    while (payers.length && receivers.length) {
+      payers.sort(order);
+      receivers.sort(order);
+      const from = payers[0], to = receivers[0];
+      const cents = Math.min(from.c, to.c);
+      out.push({ from: from.name, to: to.name, amount: cents / 100, key: `${from.id}>${to.id}:${cents}` });
+      from.c -= cents;
+      to.c -= cents;
+      if (!from.c) payers.shift();
+      if (!to.c) receivers.shift();
+    }
+    return out.sort((a, b) => a.from.localeCompare(b.from) || b.amount - a.amount);
+  }
+
   $("btn-new-night").addEventListener("click", () => {
     openModal(`
       <h2>New Event</h2>
@@ -343,17 +389,20 @@
         <label for="f-notes">Notes <span class="muted">(optional)</span></label>
         <input type="text" id="f-notes" placeholder="Anything worth remembering">
       </div>
+      ${settleSwitch("cash")}
       <div class="modal-actions">
         <button class="btn btn-ghost" id="m-cancel">Cancel</button>
         <button class="btn btn-gold" id="m-create">Start event</button>
       </div>
     `);
+    const getSettle = bindSettleSwitch();
     $("m-cancel").addEventListener("click", closeModal);
     onTap($("m-create"), async () => {
       const id = await DB.add("nights", {
         date: $("f-date").value || todayISO(),
         location: $("f-location").value.trim(),
         notes: $("f-notes").value.trim(),
+        settle: getSettle(),
         status: "open",
         players: [],
         createdAt: Date.now(),
@@ -374,6 +423,8 @@
     $("nd-status").textContent = isOpen ? "Open" : "Closed";
     $("nd-status").className = "badge" + (isOpen ? "" : " is-closed");
 
+    $("nd-settle").textContent = SETTLE_LABEL[settleMode(night)];
+
     const notes = $("nd-notes");
     notes.textContent = night.notes || "";
     notes.hidden = !night.notes;
@@ -392,6 +443,53 @@
       $("nd-players-empty").hidden = true;
       renderNightResults(night);
     }
+    renderPayments(night);
+  }
+
+  function renderPayments(night) {
+    const show = night.status === "closed" && settleMode(night) === "transfer";
+    $("nd-payments").hidden = !show;
+    if (!show) return;
+    const transfers = settleTransfers(night);
+    const paid = new Set(night.paid || []);
+    const wrap = $("nd-payments-list");
+    wrap.innerHTML = "";
+    const done = transfers.filter((t) => paid.has(t.key)).length;
+    $("nd-payments-count").textContent = transfers.length
+      ? done === transfers.length ? "All paid \u2713" : `${done} of ${transfers.length} paid`
+      : "";
+    $("nd-payments-empty").hidden = transfers.length > 0;
+    const off = round2((night.players || []).reduce((sum, np) => sum + Number(np.net || 0), 0));
+    $("nd-payments-off").hidden = Math.abs(off) < 0.005;
+    $("nd-payments-off").textContent = `Results are off by ${fmtMoney(Math.abs(off))}, so payments don't fully cover it.`;
+
+    transfers.forEach((t) => {
+      const isPaid = paid.has(t.key);
+      const row = el(`
+        <button type="button" class="card payment-row${isPaid ? " is-paid" : ""}" aria-pressed="${isPaid}">
+          <span class="pay-check" aria-hidden="true">${isPaid ? "\u2713" : ""}</span>
+          <span class="pay-who"><span class="pay-from">${escapeHtml(t.from)}</span><span class="pay-arrow">&rarr;</span><span class="pay-to">${escapeHtml(t.to)}</span></span>
+          <span class="money money-strong">${fmtMoney(t.amount)}</span>
+        </button>
+      `);
+      if (canEdit()) onTap(row, () => togglePaid(night.id, t.key));
+      else row.disabled = true;
+      wrap.appendChild(row);
+    });
+  }
+
+  async function togglePaid(nightId, key) {
+    const night = await DB.get("nights", nightId);
+    if (!night) return;
+    const still = settleTransfers(night).some((t) => t.key === key);
+    const paid = new Set(night.paid || []);
+    if (paid.has(key)) paid.delete(key);
+    else if (still) paid.add(key);
+    // keep only ticks that match the current results
+    const valid = new Set(settleTransfers(night).map((t) => t.key));
+    night.paid = [...paid].filter((k) => valid.has(k));
+    await DB.put("nights", night);
+    await refreshEvent(nightId);
   }
 
   async function refreshEvent(nightId) {
@@ -655,11 +753,13 @@
         <label for="f-notes">Notes <span class="muted">(optional)</span></label>
         <input type="text" id="f-notes" value="${escapeHtml(night.notes || "")}">
       </div>
+      ${settleSwitch(settleMode(night))}
       <div class="modal-actions">
         <button class="btn btn-ghost" id="m-cancel">Cancel</button>
         <button class="btn btn-gold" id="m-save">Save</button>
       </div>
     `);
+    const getSettle = bindSettleSwitch();
     $("m-cancel").addEventListener("click", closeModal);
     onTap($("m-save"), async () => {
       const date = $("f-date").value;
@@ -668,6 +768,7 @@
       fresh.date = date;
       fresh.location = $("f-location").value.trim();
       fresh.notes = $("f-notes").value.trim();
+      fresh.settle = getSettle();
       await DB.put("nights", fresh);
       closeModal();
       await refreshEvent(fresh.id);
@@ -812,11 +913,7 @@
     await DB.put("nights", night);
 
     openEvent(night.id, state.nightDetailReturnTo);
-    if (autoBackupEnabled()) {
-      toast((await autoBackup()) ? "Event closed \u2014 backup saved" : "Event closed \u2014 backup failed, export manually");
-    } else {
-      toast("Event closed");
-    }
+    toast("Event closed");
   });
 
   // ================= PLAYERS =================
@@ -1159,7 +1256,6 @@
     $("acct-role").textContent = ROLE_LABEL[auth.role] || "";
     $("two-step-sub").textContent = auth.mfaOn ? "On" : "Off \u2014 tap to set up";
     $("btn-two-step").disabled = !!auth.mfaOn;
-    updateLastBackupLabel();
     showView("settings");
   }
 
@@ -1208,49 +1304,14 @@
       } catch (_) {}
     },
   };
-  const AUTO_BACKUP_KEY = "rpc-auto-backup";
-  const LAST_BACKUP_KEY = "rpc-last-backup";
-
-  function autoBackupEnabled() {
-    return pref.get(AUTO_BACKUP_KEY) !== "off";
-  }
-  function setAutoBackup(on) {
-    pref.set(AUTO_BACKUP_KEY, on ? "on" : "off");
-  }
-
-  function timeAgo(ts) {
-    const mins = Math.floor((Date.now() - ts) / 60000);
-    if (mins < 1) return "just now";
-    if (mins < 60) return mins + " min ago";
-    const hours = Math.floor(mins / 60);
-    if (hours < 24) return hours + (hours === 1 ? " hour ago" : " hours ago");
-    const days = Math.floor(hours / 24);
-    return days === 1 ? "yesterday" : days + " days ago";
-  }
-  function updateLastBackupLabel() {
-    const ts = Number(pref.get(LAST_BACKUP_KEY));
-    $("last-backup").textContent = ts ? "Last backup: " + timeAgo(ts) : "No backup yet on this device";
-  }
-  $("auto-backup").checked = autoBackupEnabled();
-  $("auto-backup").addEventListener("change", (e) => {
-    setAutoBackup(e.target.checked);
-    toast(e.target.checked ? "Auto-backup on" : "Auto-backup off");
-  });
-
-  async function autoBackup() {
+  // Export is manual only: a copy is saved to this phone just when you ask for one.
+  onTap($("btn-export"), async () => {
     try {
       downloadJSON(await DB.exportAll(), backupFilename());
-      pref.set(LAST_BACKUP_KEY, String(Date.now()));
-      updateLastBackupLabel();
-      return true;
-    } catch (e) {
-      console.error("Auto-backup failed", e);
-      return false;
+      toast("Backup saved to Downloads");
+    } catch (err) {
+      handleError(err);
     }
-  }
-
-  onTap($("btn-export"), async () => {
-    toast((await autoBackup()) ? "Backup exported" : "Export failed \u2014 please try again");
   });
 
   $("btn-import").addEventListener("click", () => $("import-file").click());
@@ -1399,7 +1460,11 @@
       .map((np) => ({ name: np.name, in: buyinTotal(np), out: Number(np.cashOut || 0), net: Number(np.net || 0) }))
       .sort((a, b) => b.net - a.net);
     const listTop = 248;
-    const H = listTop + 34 + rows.length * ROW + 28;
+    const transfers = settleMode(night) === "transfer" ? settleTransfers(night) : [];
+    const paid = new Set(night.paid || []);
+    const PAY_ROW = 40;
+    const payTop = listTop + 34 + rows.length * ROW + 30;
+    const H = transfers.length ? payTop + 36 + transfers.length * PAY_ROW + 28 : listTop + 34 + rows.length * ROW + 28;
     const { canvas, ctx } = makeCanvas(W, H);
 
     ctx.fillStyle = c.bg;
@@ -1444,6 +1509,23 @@
       text(ctx, fmtMoney(r.out), colOut, mid, { font: `15px ${SANS}`, color: c.soft, align: "right" });
       text(ctx, fmtSigned(r.net), colNet, mid, { font: `700 16px ${SANS}`, color: netColor(c, r.net), align: "right" });
     });
+
+    if (transfers.length) {
+      text(ctx, "Who pays whom", PAD, payTop + 10, { font: `600 20px ${SERIF}`, color: c.ink });
+      transfers.forEach((t, i) => {
+        const y = payTop + 36 + i * PAY_ROW;
+        if (i % 2 === 0) {
+          roundRect(ctx, PAD, y, W - PAD * 2, PAY_ROW, 8);
+          ctx.fillStyle = c.surface;
+          ctx.fill();
+        }
+        const mid = y + PAY_ROW / 2;
+        const isPaid = paid.has(t.key);
+        const line = `${t.from}  \u2192  ${t.to}`;
+        text(ctx, line, PAD + 12, mid, { font: `600 15px ${SANS}`, color: isPaid ? c.soft : c.ink, max: W - PAD * 2 - 150 });
+        text(ctx, (isPaid ? "\u2713 paid  " : "") + fmtMoney(t.amount), W - PAD - 12, mid, { font: `700 15px ${SANS}`, color: isPaid ? c.soft : c.ink, align: "right" });
+      });
+    }
     return canvas;
   }
 
@@ -1772,12 +1854,11 @@
     `);
     $("m-cancel").addEventListener("click", closeModal);
     onTap($("m-upload"), async () => {
-      downloadJSON({ app: "retro-poker-club", version: 2, exportedAt: new Date().toISOString(), ...local }, backupFilename());
       await DB.importAll(local);
       pref.set(UPLOAD_DONE_KEY, "1");
       closeModal();
       refreshCurrentView();
-      toast("Data uploaded — a backup file was also saved");
+      toast("Data uploaded");
     });
   }
 
@@ -1820,6 +1901,7 @@
       openTab("nights");
       requestPersistentStorage();
       DB.subscribe(refreshCurrentView);
+      DB.exportAll().catch(() => {}); // load everything once so all tabs work offline
       offerLocalUpload().catch((err) => console.error(err));
     },
     refresh: refreshCurrentView,

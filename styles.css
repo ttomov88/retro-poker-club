@@ -622,3 +622,37 @@ body[data-role="viewer"] .chip-row:active { background: var(--surface); }
 .modal .seg { display: flex; gap: 8px; }
 .modal .seg .btn { flex: 1; }
 .modal .seg .btn.is-on { border-color: var(--gold); color: var(--gold-deep); background: var(--gold-tint); }
+
+/* ============ Settling: who pays whom ============ */
+.event-settle { font-size: 13px; color: var(--ink-soft); margin: -6px 0 12px; }
+.modal .seg .btn { white-space: normal; line-height: 1.25; }
+#nd-payments { margin-top: 22px; }
+.payment-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.payment-row:disabled { cursor: default; opacity: 1; }
+.pay-check {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1.5px solid #C9C4B5;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+}
+.payment-row.is-paid .pay-check { background: var(--gold); border-color: var(--gold); }
+.pay-who { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 7px; font-weight: 600; }
+.pay-arrow { color: var(--gold-deep); }
+.payment-row.is-paid .pay-who,
+.payment-row.is-paid .money { color: var(--ink-soft); text-decoration: line-through; text-decoration-color: var(--line); }
+.payments-hint { margin-top: 10px; }

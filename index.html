@@ -69,6 +69,7 @@
         </div>
       </div>
 
+      <p class="event-settle" id="nd-settle"></p>
       <p class="hint-text event-notes" id="nd-notes" hidden></p>
 
       <div class="pot-hero" id="nd-pot-hero">
@@ -94,6 +95,18 @@
           <button class="btn btn-ghost-gold btn-sm btn-icon" id="btn-share-event"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 15V4m0 0L8 8m4-4 4 4M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>Share</button>
         </div>
         <div id="nd-results" class="stack"></div>
+
+        <div id="nd-payments" hidden>
+          <div class="section-row">
+            <h2>Who pays whom</h2>
+            <span class="card-sub" id="nd-payments-count"></span>
+          </div>
+          <div id="nd-payments-list" class="stack"></div>
+          <p class="empty-msg" id="nd-payments-empty" hidden>Nobody owes anything.</p>
+          <p class="hint-text" id="nd-payments-off" hidden></p>
+          <p class="hint-text edit-only payments-hint">Tap a payment when it's done.</p>
+        </div>
+
         <button class="btn btn-ghost btn-block section-actions edit-only" id="btn-reopen-night">Reopen event</button>
       </div>
 
@@ -197,16 +210,12 @@
       <div class="section-row"><h2>Backup</h2></div>
       <div class="stack">
         <button type="button" class="card card-tappable setting-row" id="btn-export">
-          <span class="setting-text"><span class="card-title">Export backup</span><span class="card-sub" id="last-backup"></span></span><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19h14" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="setting-text"><span class="card-title">Export backup</span><span class="card-sub">Save a copy to this phone</span></span><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19h14" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
         <button type="button" class="card card-tappable setting-row edit-only" id="btn-import">
           <span class="card-title">Import backup</span><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 15V4m0 0L7.5 8.5M12 4l4.5 4.5M5 19h14" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
         <input type="file" id="import-file" accept="application/json" hidden>
-        <label class="card setting-row edit-only" for="auto-backup">
-          <span class="card-title">Auto-backup when an event closes</span>
-          <input type="checkbox" id="auto-backup" class="switch">
-        </label>
       </div>
     </section>
 
