@@ -21,9 +21,9 @@ A small PWA for tracking private poker events: buy-ins (with rebuys), per-player
 
 ## Data & backups
 
-- Export backup (Settings) downloads all club data as a JSON file. Auto-backup (admins) does this whenever you close an event.
-- Import backup (admins) replaces all club data with a file, in one transaction: if the file is bad, nothing changes.
-- On the first start after the move to the cloud, an admin whose phone still has data from the old offline-only version gets a one-tap upload.
+- **Automatic:** every night at 01:00 UTC the database saves a full copy of players, events, chips and members into its own `backups` table (not reachable from the app). Copies older than 30 days are deleted. A copy is also taken right before any import. Restoring is a single database call (`restore_backup(id)`), which first saves the current state too.
+- **Manual:** Export backup (Settings) downloads all club data as a JSON file to the phone, only when you tap it. Nothing is saved to phones automatically.
+- **Import backup** (admins only) replaces all club data with a file, in one transaction: if the file is bad, nothing changes.
 
 ## Notes
 
