@@ -15,7 +15,6 @@
   };
 
   const EUR = "\u20AC";
-  const DATE_LOCALE = "en-GB"; // fixed, so dates match the English UI regardless of phone language
   const TAB_ROOTS = ["nights", "players", "chips"];
 
   // ================= Helpers =================
@@ -43,10 +42,10 @@
     return "amount-zero";
   }
 
+  // European format: dd.mm.yyyy
   function fmtDate(iso) {
-    const d = new Date(iso + "T00:00:00");
-    if (isNaN(d.getTime())) return iso;
-    return d.toLocaleDateString(DATE_LOCALE, { weekday: "short", year: "numeric", month: "short", day: "numeric" });
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ""));
+    return m ? `${m[3]}.${m[2]}.${m[1]}` : String(iso || "");
   }
 
   function todayISO() {
