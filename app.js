@@ -1053,24 +1053,21 @@
     const token = renderToken("leaderboard");
     const [roster, nights] = await Promise.all([DB.getAll("players"), DB.getAll("nights")]);
     if (isStale("leaderboard", token)) return;
-    const closed = nights.filter((n) => n.status === "closed").length;
     const rows = roster
       .filter((p) => !p.archived)
       .map((p) => ({ p, s: playerStats(nights, p.id) }))
       .filter((r) => r.s.eventsPlayed > 0)
       .sort((a, b) => b.s.net - a.s.net || b.s.totalCashOut - a.s.totalCashOut || a.p.name.localeCompare(b.p.name));
 
-    $("lb-sub").textContent = closed ? `${closed} event${closed === 1 ? "" : "s"} \u00B7 sorted by net result` : "";
     $("lb-empty").hidden = rows.length > 0;
     $("lb-head").hidden = rows.length === 0;
-    $("lb-note").hidden = rows.length === 0;
     const list = $("lb-list");
     list.innerHTML = "";
     rows.forEach(({ p, s }, i) => {
       const extras = [`in ${shortMoney(s.totalBuyIn)}`, `out ${shortMoney(s.totalCashOut)}`];
       if (s.biggestWin !== null) extras.push(`best ${shortMoney(s.biggestWin, true)}`);
       if (s.biggestLoss !== null) extras.push(`worst ${shortMoney(s.biggestLoss, true)}`);
-      const roi = s.roi === null ? "\u2014" : fmtPct(s.roi, true) + (s.fewEvents ? "*" : "");
+      const roi = s.roi === null ? "\u2014" : fmtPct(s.roi, true);
       const row = el(`
         <div class="card card-tappable lb-row">
           <div class="lb-grid">
