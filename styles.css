@@ -680,4 +680,5 @@ body.is-typing .tabbar { display: none; }
 .pd-club { margin-bottom: 14px; }
 .pd-club .card-title { font-size: 14px; font-weight: 600; }
 .switch:disabled { opacity: 0.7; }
-.club-mark { color: var(--gold); font-size: 14px; margin-left: 2px; }
+.lb-rank { display: flex; flex-direction: column; align-items: flex-start; }
+.club-mark { color: var(--gold); font-size: 13px; line-height: 1; margin-top: 4px; }

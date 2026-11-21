@@ -1080,8 +1080,8 @@
       const row = el(`
         <div class="card card-tappable lb-row">
           <div class="lb-grid">
-            <span class="lb-rank${i < 3 ? " is-top" : ""}">${i + 1}</span>
-            <span class="lb-name">${escapeHtml(p.name)}${p.clubMember ? '&nbsp;<span class="club-mark" title="Club member">&#9824;</span>' : ""}</span>
+            <span class="lb-rank${i < 3 ? " is-top" : ""}">${i + 1}${p.clubMember ? '<span class="club-mark" title="Club member">&#9824;</span>' : ""}</span>
+            <span class="lb-name">${escapeHtml(p.name)}</span>
             <span class="lb-num">${s.eventsPlayed}</span>
             <span class="lb-num money ${amountClass(s.net)}">${shortMoney(s.net, true)}</span>
             <span class="lb-num lb-roi ${s.roi === null || s.fewEvents ? "amount-zero" : amountClass(s.roi)}">${roi}</span>
