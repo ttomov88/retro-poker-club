@@ -675,3 +675,5 @@ body.is-typing .tabbar { display: none; }
 .lb-sub { margin: 5px 0 0 28px; font-size: 12.5px; color: var(--ink-soft); line-height: 1.45; }
 .lb-sub span { white-space: nowrap; }
 .lb-note { margin-top: 14px; }
+.lb-toggle { margin-bottom: 14px; }
+.lb-toggle .card-title { font-size: 14px; font-weight: 600; }

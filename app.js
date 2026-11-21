@@ -1049,17 +1049,26 @@
     return str.replace(/\.00$/, "");
   }
 
+  const LB_ALL_KEY = "rpc-lb-all";
+  $("lb-all").addEventListener("change", (e) => {
+    pref.set(LB_ALL_KEY, e.target.checked ? "on" : "off");
+    renderLeaderboard().catch(handleError);
+  });
+
   async function renderLeaderboard() {
     const token = renderToken("leaderboard");
     const [roster, nights] = await Promise.all([DB.getAll("players"), DB.getAll("nights")]);
     if (isStale("leaderboard", token)) return;
+    const showAll = pref.get(LB_ALL_KEY) === "on"; // off by default: only players with 3+ events
+    $("lb-all").checked = showAll;
     const rows = roster
       .filter((p) => !p.archived)
       .map((p) => ({ p, s: playerStats(nights, p.id) }))
-      .filter((r) => r.s.eventsPlayed > 0)
+      .filter((r) => r.s.eventsPlayed > 0 && (showAll || !r.s.fewEvents))
       .sort((a, b) => b.s.net - a.s.net || b.s.totalCashOut - a.s.totalCashOut || a.p.name.localeCompare(b.p.name));
 
     $("lb-empty").hidden = rows.length > 0;
+    $("lb-empty").textContent = showAll ? "No closed events yet." : "No players with 3 or more events yet.";
     $("lb-head").hidden = rows.length === 0;
     const list = $("lb-list");
     list.innerHTML = "";
