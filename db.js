@@ -48,6 +48,8 @@ function setOffline(value) {
   });
 }
 
+window.addEventListener("offline", () => setOffline(true));
+
 // ---------- local copy of the last data seen ----------
 const cache = {
   read(store) {
@@ -146,6 +148,37 @@ async function fetchAll(store) {
   return out;
 }
 
+// ---------- background refresh (show saved data instantly, update when the network answers) ----------
+const fresh = { inflight: {}, at: {}, listeners: [] };
+const REVALIDATE_GAP_MS = 3000;
+
+function emitChanged(store) {
+  fresh.listeners.forEach((fn) => {
+    try {
+      fn(store);
+    } catch (_) {}
+  });
+}
+
+// Fetches a store from the server; if it differs from the saved copy, saves it
+// and tells the app to redraw. Errors are swallowed (the offline strip shows them).
+function revalidate(store, force) {
+  if (fresh.inflight[store]) return fresh.inflight[store];
+  if (!force && Date.now() - (fresh.at[store] || 0) < REVALIDATE_GAP_MS) return Promise.resolve();
+  fresh.inflight[store] = fetchAll(store)
+    .then((rows) => {
+      fresh.at[store] = Date.now();
+      const before = JSON.stringify(cache.read(store));
+      cache.write(store, rows);
+      if (JSON.stringify(rows) !== before) emitChanged(store);
+    })
+    .catch(() => {})
+    .finally(() => {
+      delete fresh.inflight[store];
+    });
+  return fresh.inflight[store];
+}
+
 const DB = {
   client: sb,
   DbError,
@@ -159,19 +192,46 @@ const DB = {
   clearCache: cache.clear,
   request, // run any Supabase query with the same timeout/offline handling
 
-  // Reads fall back to the local copy when there's no connection.
-  async getAll(store) {
+  // For showing data: returns the saved copy right away (if there is one) and
+  // refreshes it in the background; the app redraws if anything changed.
+  // { fresh: true } waits for the server instead (exports, checks before saving).
+  async getAll(store, opts) {
+    const cached = cache.read(store);
+    if (cached && !(opts && opts.fresh)) {
+      revalidate(store);
+      return clone(cached);
+    }
     try {
       const rows = await fetchAll(store);
+      fresh.at[store] = Date.now();
       cache.write(store, rows);
       return rows;
     } catch (err) {
-      const cached = err.kind === "offline" ? cache.read(store) : null;
-      if (cached) return clone(cached);
+      if (cached && err.kind === "offline") return clone(cached);
       throw err;
     }
   },
 
+  // One record for display: saved copy first (see getAll), server if not saved yet.
+  async read(store, id) {
+    const cached = cache.read(store);
+    const hit = cached && cached.find((r) => r.id === id);
+    if (hit) {
+      revalidate(store);
+      return clone(hit);
+    }
+    return DB.get(store, id);
+  },
+
+  // Called when something changed: anyone's save (live updates) or a server-side change.
+  onChanged(fn) {
+    fresh.listeners.push(fn);
+  },
+  refresh(stores) {
+    return Promise.all((stores || STORES).map((s) => revalidate(s, true)));
+  },
+
+  // Always asks the server: used right before saving, so the version is current.
   async get(store, id) {
     try {
       const row = await request(() => sb.from(store).select("id,data,version").eq("id", id).maybeSingle());
@@ -218,13 +278,21 @@ const DB = {
     return Number(rows[0].id);
   },
 
-  async delete(store, id) {
-    await request(() => sb.from(store).delete().eq("id", id));
+  // With a version, the delete is refused if someone changed the record meanwhile.
+  async delete(store, id, version) {
+    const rows = await request(() => {
+      let q = sb.from(store).delete().eq("id", id);
+      if (version != null) q = q.eq("version", version);
+      return q.select("id");
+    });
+    if (version != null && !rows.length) {
+      throw new DbError("conflict", "Someone else changed this at the same time");
+    }
     cache.remove(store, id);
   },
 
   async exportAll() {
-    const [players, nights, chips] = await Promise.all(STORES.map((s) => DB.getAll(s)));
+    const [players, nights, chips] = await Promise.all(STORES.map((s) => DB.getAll(s, { fresh: true })));
     const strip = (rows) => rows.map((r) => ({ id: r.id, ...toData(r) }));
     return {
       app: "retro-poker-club",
@@ -257,15 +325,17 @@ const DB = {
     cache.clear();
   },
 
-  // Calls back (debounced) whenever anyone changes events, players or chips.
-  subscribe(onChange) {
-    let timer = null;
-    const fire = () => {
-      clearTimeout(timer);
-      timer = setTimeout(onChange, 400);
-    };
+  // Live updates: when anyone changes events, players or chips, re-fetch that
+  // table; onChanged listeners fire if the data really changed.
+  subscribe() {
+    const timers = {};
     const channel = sb.channel("rpc-data");
-    STORES.forEach((table) => channel.on("postgres_changes", { event: "*", schema: "public", table }, fire));
+    STORES.forEach((table) =>
+      channel.on("postgres_changes", { event: "*", schema: "public", table }, () => {
+        clearTimeout(timers[table]);
+        timers[table] = setTimeout(() => revalidate(table, true), 300);
+      })
+    );
     channel.subscribe();
     return () => sb.removeChannel(channel);
   },

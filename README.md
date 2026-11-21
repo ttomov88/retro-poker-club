@@ -13,9 +13,9 @@ A small PWA for tracking private poker events: buy-ins (with rebuys), per-player
   - **Viewer:** sees events and stats only.
 
   The database enforces these rules itself (row-level security), not just the buttons.
-- **Joining:** an admin adds the email in Settings → Members. The person opens the app, taps *First time here? Set your password*, and signs in. Only listed emails can create a login.
-- **Forgot password / lost phone:** an admin taps the member → *Reset login*, and the person sets a new password the same way.
-- **Offline:** the last loaded data stays on the phone, so the app opens and shows everything without a signal. Saving needs a connection.
+- **Joining:** an admin adds the email in Settings → Members and gets a 6-digit **invite code** (valid 7 days, 5 tries) to send along with the link. The person opens the app, taps *First time here? Set your password*, and enters email + code + a new password. Without the code nobody can claim an invite.
+- **Forgot password / lost phone:** an admin taps the member → *Reset login*: the old login is deleted (signed out everywhere) and a new invite code is shown. The owner's login can't be reset from the app.
+- **Offline / weak signal:** screens show the saved copy instantly and update in the background when the network answers. Saving needs a connection. If two admins save the same event at the same moment, the app retries automatically, so nothing is lost.
 - **Live updates:** changes by other members appear automatically.
 - **Keep-alive:** `.github/workflows/keep-alive.yml` pings the database daily, because free Supabase projects pause after 7 days without activity.
 
@@ -23,17 +23,21 @@ A small PWA for tracking private poker events: buy-ins (with rebuys), per-player
 
 - **Automatic:** every night at 01:00 UTC the database saves a full copy of players, events, chips and members into its own `backups` table (not reachable from the app). Copies older than 30 days are deleted. A copy is also taken right before any import. Restoring is a single database call (`restore_backup(id)`), which first saves the current state too.
 - **Manual:** Export backup (Settings) downloads all club data as a JSON file to the phone, only when you tap it. Nothing is saved to phones automatically.
-- **Import backup** (admins only) replaces all club data with a file, in one transaction: if the file is bad, nothing changes.
+- **Import backup** (owner only) replaces all club data with a file, in one transaction: if the file is bad, nothing changes.
+
+## Releasing a change
+
+Bump `CACHE_VERSION` in `sw.js` with every release. Phones download the whole new release in the background and switch to it at a safe moment (never during close-out or with a popup open). The database setup is in `supabase/`.
 
 ## Notes
 
 - Buy-ins are entered directly in euros; the Chips tab is a reference sheet only (denomination → euro value, and how many of each you own) and doesn't affect calculations.
-- An event can be reopened after closing, in case you need to fix a mistake. Date, location and notes can be edited anytime (pencil next to the title).
+- An event can be reopened after closing, in case you need to fix a mistake. Date, location, notes and Cash / Pay each other can be edited anytime (pencil next to the title); Delete is in that popup too.
 - Players added to an event without any buy-in are removed when you close it (after a confirmation), so they don't count as having played.
 - Back gesture: steps back one screen; on the Events screen, press back twice within 2 seconds to close the app.
 - Tap the logo/name in the header from anywhere to jump back to the Events list.
 - Players are archived, never deleted: archived players are hidden from new events but keep their stats. Adding the same name again restores them.
-- Leaderboard tab: all-time ranking by net result (events, net, ROI, plus buy-in/cash-out/best/worst per player); tap a player for full stats.
+- Leaderboard tab: all-time ranking by net result (net, ROI; events, buy-in, cash-out, best and worst underneath). "Club members" switch (on by default) shows only players marked as club members on their player page. Tap a player for full stats.
 - Share: closed events have a Share button (results image, incl. who pays whom for "Pay each other" events).
 - Each event is either "Cash on the table" or "Pay each other"; the latter shows the fewest payments to settle up, with paid ticks.
 - Close-out shows a live counter (cashed out / total buy-ins) and each player's result as you type.

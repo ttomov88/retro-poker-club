@@ -122,11 +122,15 @@
   function showClaim(prefillEmail) {
     show(`
       <h1 class="auth-title">Set your password</h1>
-      <p class="auth-note">Use the email an admin added for you.</p>
+      <p class="auth-note">Use the email and invite code an admin sent you.</p>
       <form class="auth-form">
         <div class="field">
           <label for="c-email">Email</label>
           <input type="email" id="c-email" autocomplete="username" inputmode="email" value="${esc(prefillEmail)}">
+        </div>
+        <div class="field">
+          <label for="c-code">Invite code</label>
+          <input type="text" id="c-code" class="code-input" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000">
         </div>
         <div class="field">
           <label for="c-pass">New password <span class="muted">(8+ characters)</span></label>
@@ -144,13 +148,15 @@
     busy($("c-go"), async () => {
       const email = $("c-email").value.trim().toLowerCase();
       const password = $("c-pass").value;
+      const code = $("c-code").value.replace(/\D/g, "");
       if (!email) return setError("Enter your email.");
+      if (code.length !== 6) return setError("Enter the 6-digit invite code.");
       if (password.length < 8) return setError("Password must be at least 8 characters.");
       if (password !== $("c-pass2").value) return setError("The passwords don't match.");
       const res = await fetch(`${SUPABASE_URL}/functions/v1/claim`, {
         method: "POST",
         headers: { "Content-Type": "application/json", apikey: SUPABASE_KEY },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, code }),
       });
       const out = await res.json().catch(() => ({}));
       if (!res.ok) return setError(out.error || "Couldn't create the login. Try again.");
@@ -260,6 +266,8 @@
   }
 
   function showNoAccess(email) {
+    DB.clearCache(); // no access any more: don't keep the club's data on this phone
+    store.set(ROLE_KEY, null);
     show(`
       <h1 class="auth-title">No access</h1>
       <p class="auth-note">${esc(email)} isn't on the members list any more. Ask an admin to add you again.</p>
@@ -323,6 +331,7 @@
   function startApp(isEditor) {
     AUTH.isEditor = isEditor;
     document.body.dataset.role = isEditor ? "editor" : "viewer";
+    document.body.classList.toggle("is-owner", isEditor && AUTH.role === "owner");
     authEl.hidden = true;
     bodyEl.innerHTML = "";
     document.getElementById("app").hidden = false;
@@ -345,7 +354,11 @@
 
   // If the session ends elsewhere (e.g. login reset by an admin), go back to sign-in.
   sb.auth.onAuthStateChange((event) => {
-    if (event === "SIGNED_OUT" && started) location.reload();
+    if (event === "SIGNED_OUT") {
+      DB.clearCache();
+      store.set(ROLE_KEY, null);
+      if (started) location.reload();
+    }
   });
 
   async function boot() {

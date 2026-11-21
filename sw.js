@@ -1,11 +1,14 @@
 /* Retro Poker Club — service worker
-   Network-first (so updates show up right away), but if the network hasn't
-   answered within NETWORK_TIMEOUT_MS the cached copy is served instead, so a
-   weak signal at the table doesn't leave you staring at a blank screen. */
 
-const CACHE_VERSION = "rpc-v20";
-const NETWORK_TIMEOUT_MS = 3000;
-const PRECACHE_URLS = [
+   The app's own files are served from one versioned cache, all from the same
+   release: a new release is downloaded completely in the background (install),
+   then swapped in at once (activate), and the page reloads at a safe moment.
+   So a phone never runs a mix of old and new files.
+   Bump CACHE_VERSION with every release. Club data never goes through here
+   (Supabase requests are left alone); the app keeps its own offline copy. */
+
+const CACHE_VERSION = "rpc-v21";
+const APP_FILES = [
   "./",
   "./index.html",
   "./styles.css",
@@ -21,7 +24,11 @@ const PRECACHE_URLS = [
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_VERSION).then((cache) => cache.addAll(PRECACHE_URLS)).then(() => self.skipWaiting())
+    caches
+      .open(CACHE_VERSION)
+      // cache: "reload" skips the browser's HTTP cache, so every file is the new release
+      .then((cache) => cache.addAll(APP_FILES.map((url) => new Request(url, { cache: "reload" }))))
+      .then(() => self.skipWaiting())
   );
 });
 
@@ -34,68 +41,33 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-function fromCache(request) {
-  return caches.match(request).then((cached) => {
-    if (cached) return cached;
-    // Only page navigations fall back to the app shell; a missing image or
-    // stylesheet must not be answered with HTML.
-    if (request.mode === "navigate") return caches.match("./index.html");
-    return undefined;
-  });
-}
-
 self.addEventListener("fetch", (event) => {
   const request = event.request;
   if (request.method !== "GET") return;
-  // Club data and sign-in go straight to Supabase: never cached or delayed here
-  // (the app keeps its own offline copy of the data).
-  if (new URL(request.url).hostname.endsWith(".supabase.co")) return;
+  const url = new URL(request.url);
+  if (url.hostname.endsWith(".supabase.co")) return;
 
-  const network = fetch(request);
-
-  // Refresh the cache with good responses (no 404/500 pages, no opaque
-  // responses). Registered up front so it still completes when the cached
-  // copy was already served after the timeout.
-  event.waitUntil(
-    network
-      .then((response) => {
-        if (response && response.ok) {
-          const copy = response.clone();
-          return caches.open(CACHE_VERSION).then((cache) => cache.put(request, copy));
-        }
+  if (url.origin === self.location.origin) {
+    // App files: from this release's cache; the network only for anything not in it.
+    event.respondWith(
+      caches.open(CACHE_VERSION).then((cache) => {
+        const key = request.mode === "navigate" ? "./index.html" : request;
+        return cache.match(key, { ignoreSearch: true }).then((hit) => hit || fetch(request));
       })
-      .catch(() => {})
-  );
+    );
+    return;
+  }
 
+  // Fonts (Google): network first, cached copy when offline.
   event.respondWith(
-    new Promise((resolve) => {
-      let done = false;
-      const finish = (res) => {
-        if (!done && res) {
-          done = true;
-          resolve(res);
+    fetch(request)
+      .then((response) => {
+        if (response && (response.ok || response.type === "opaque")) {
+          const copy = response.clone();
+          caches.open(CACHE_VERSION).then((cache) => cache.put(request, copy));
         }
-      };
-
-      const timer = setTimeout(() => {
-        fromCache(request).then(finish); // slow network: serve cache if we have it
-      }, NETWORK_TIMEOUT_MS);
-
-      network
-        .then((res) => {
-          clearTimeout(timer);
-          finish(res);
-        })
-        .catch(() => {
-          clearTimeout(timer);
-          fromCache(request).then((res) => {
-            if (res) finish(res);
-            else if (!done) {
-              done = true;
-              resolve(Response.error());
-            }
-          });
-        });
-    })
+        return response;
+      })
+      .catch(() => caches.match(request).then((hit) => hit || Response.error()))
   );
 });

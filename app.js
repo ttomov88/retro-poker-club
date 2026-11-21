@@ -21,7 +21,8 @@
   const $ = (id) => document.getElementById(id);
 
   function round2(n) {
-    return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+    const v = Number(n);
+    return (Math.sign(v) * Math.round(Math.abs(v) * 100 + 1e-7)) / 100;
   }
 
   function fmtMoney(n) {
@@ -45,7 +46,7 @@
   // European format: dd.mm.yyyy
   function fmtDate(iso) {
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ""));
-    return m ? `${m[3]}.${m[2]}.${m[1]}` : String(iso || "");
+    return m ? `${m[3]}.${m[2]}.${m[1]}` : ""; // anything else is not a date: show nothing
   }
 
   function todayISO() {
@@ -77,12 +78,41 @@
     return t.content.firstElementChild;
   }
 
-  function toast(msg) {
+  // Short message at the bottom. Optional action button, e.g. { label: "Undo", run: fn }.
+  function toast(msg, action) {
     const t = $("toast");
     t.textContent = msg;
+    if (action) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "toast-action";
+      b.textContent = action.label;
+      b.addEventListener("click", () => {
+        t.hidden = true;
+        Promise.resolve(action.run()).catch(handleError);
+      }, { once: true });
+      t.appendChild(b);
+    }
     t.hidden = false;
     clearTimeout(toast._h);
-    toast._h = setTimeout(() => (t.hidden = true), 2400);
+    toast._h = setTimeout(() => (t.hidden = true), action ? 5000 : 2400);
+  }
+
+  // Read-modify-save on one record, retried if someone else saved it at the
+  // same moment (so a buy-in tapped by two admins at once is never lost).
+  // `change` edits the object in place; returning false cancels the save.
+  async function mutate(store, id, change, tries = 3) {
+    for (let i = 0; ; i++) {
+      const obj = await DB.get(store, id);
+      if (!obj) return null;
+      if (change(obj) === false) return null;
+      try {
+        await DB.put(store, obj);
+        return obj;
+      } catch (err) {
+        if (err.kind !== "conflict" || i >= tries - 1) throw err;
+      }
+    }
   }
 
   function buyinTotal(np) {
@@ -150,6 +180,7 @@
     }
     window.scrollTo(0, 0);
     updatePotStrip();
+    if (typeof reloadIfSafe === "function" && TAB_ROOTS.includes(name)) setTimeout(reloadIfSafe, 0);
   }
 
   function openTab(tab) {
@@ -230,14 +261,27 @@
     syncViewportHeight();
   }
 
+  let modalReturnFocus = null;
   function openModal(html) {
+    modalReturnFocus = document.activeElement;
     modalRoot.innerHTML = html;
+    modalRoot.setAttribute("role", "dialog");
+    modalRoot.setAttribute("aria-modal", "true");
+    const title = modalRoot.querySelector("h2");
+    if (title) {
+      title.id = "modal-title";
+      modalRoot.setAttribute("aria-labelledby", "modal-title");
+    }
     backdrop.hidden = false;
     syncViewportHeight();
   }
   function closeModal() {
     backdrop.hidden = true;
     modalRoot.innerHTML = "";
+    if (modalReturnFocus && document.contains(modalReturnFocus) && typeof modalReturnFocus.focus === "function") {
+      modalReturnFocus.focus({ preventScroll: true });
+    }
+    modalReturnFocus = null;
   }
   function isModalOpen() {
     return !backdrop.hidden;
@@ -417,7 +461,7 @@
   // ================= EVENT DETAIL =================
   async function renderNightDetail(nightId) {
     const token = renderToken("nightDetail");
-    const night = await DB.get("nights", nightId);
+    const night = await DB.read("nights", nightId);
     if (isStale("nightDetail", token) || !night) return;
 
     const isOpen = night.status === "open";
@@ -481,16 +525,13 @@
   }
 
   async function togglePaid(nightId, key) {
-    const night = await DB.get("nights", nightId);
-    if (!night) return;
-    const still = settleTransfers(night).some((t) => t.key === key);
-    const paid = new Set(night.paid || []);
-    if (paid.has(key)) paid.delete(key);
-    else if (still) paid.add(key);
-    // keep only ticks that match the current results
-    const valid = new Set(settleTransfers(night).map((t) => t.key));
-    night.paid = [...paid].filter((k) => valid.has(k));
-    await DB.put("nights", night);
+    await mutate("nights", nightId, (night) => {
+      const valid = new Set(settleTransfers(night).map((t) => t.key));
+      const paid = new Set(night.paid || []);
+      if (paid.has(key)) paid.delete(key);
+      else if (valid.has(key)) paid.add(key);
+      night.paid = [...paid].filter((k) => valid.has(k)); // keep only ticks that match the current results
+    });
     await refreshEvent(nightId);
   }
 
@@ -507,7 +548,7 @@
 
     players.forEach((np) => {
       const chips = (np.buyins || [])
-        .map((b, i) => `<button type="button" class="buyin-chip" data-idx="${i}" data-ts="${Number(b.ts) || ""}">${fmtMoney(b.amount)}</button>`)
+        .map((b, i) => `<button type="button" class="buyin-chip" data-idx="${i}" data-ts="${Number(b.ts) || ""}">${fmtMoney(b.amount)}<svg class="edit-only" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button>`)
         .join("");
       const row = el(`
         <div class="card player-row">
@@ -524,7 +565,8 @@
         </div>
       `);
       onTap(row.querySelector(".btn-quick-buyin"), async () => {
-        if (await addBuyin(night.id, np.playerId, QUICK_BUYINS[0])) toast(`${fmtMoney(QUICK_BUYINS[0])} added for ${np.name}`);
+        const ts = await addBuyin(night.id, np.playerId, QUICK_BUYINS[0]);
+        if (ts) toast(`${fmtMoney(QUICK_BUYINS[0])} added for ${np.name}`, { label: "Undo", run: () => removeBuyin(night.id, np.playerId, ts) });
       });
       row.querySelector(".btn-add-buyin").addEventListener("click", () => openBuyinModal(night.id, np.playerId, np.name));
       row.querySelectorAll(".buyin-chip").forEach((chipEl) => {
@@ -534,9 +576,9 @@
       });
       onTap(row.querySelector(".btn-remove-player"), async () => {
         if (!confirm(`Remove ${np.name} from this event? Their buy-ins will be removed too.`)) return;
-        const fresh = await DB.get("nights", night.id);
-        fresh.players = fresh.players.filter((p) => p.playerId !== np.playerId);
-        await DB.put("nights", fresh);
+        await mutate("nights", night.id, (fresh) => {
+          fresh.players = fresh.players.filter((p) => p.playerId !== np.playerId);
+        });
         await refreshEvent(night.id);
       });
       wrap.appendChild(row);
@@ -563,15 +605,28 @@
 
   const QUICK_BUYINS = [20, 40];
 
+  // Returns the new buy-in's timestamp (its id), or null.
   async function addBuyin(nightId, playerId, amount) {
-    const night = await DB.get("nights", nightId);
-    const np = night && night.players.find((p) => p.playerId === playerId);
-    if (!np) return false;
-    np.buyins = np.buyins || [];
-    np.buyins.push({ amount, ts: Date.now() });
-    await DB.put("nights", night);
+    const ts = Date.now();
+    const saved = await mutate("nights", nightId, (night) => {
+      const np = night.players.find((p) => p.playerId === playerId);
+      if (!np) return false;
+      np.buyins = np.buyins || [];
+      np.buyins.push({ amount, ts });
+    });
     await refreshEvent(nightId);
-    return true;
+    return saved ? ts : null;
+  }
+
+  async function removeBuyin(nightId, playerId, ts) {
+    await mutate("nights", nightId, (night) => {
+      const np = night.players.find((p) => p.playerId === playerId);
+      const i = np ? (np.buyins || []).findIndex((b) => Number(b.ts) === ts) : -1;
+      if (i < 0) return false;
+      np.buyins.splice(i, 1);
+    });
+    await refreshEvent(nightId);
+    toast("Buy-in removed");
   }
 
   function readAmount(input) {
@@ -619,7 +674,7 @@
   }
 
   async function openEditBuyinModal(nightId, playerId, buyinIndex, buyinTs) {
-    const night = await DB.get("nights", nightId);
+    const night = await DB.read("nights", nightId);
     const np = night && night.players.find((p) => p.playerId === playerId);
     const at = np ? findBuyinIndex(np.buyins, buyinIndex, buyinTs) : -1;
     const buyin = at >= 0 ? np.buyins[at] : null;
@@ -642,17 +697,18 @@
     $("m-cancel").addEventListener("click", closeModal);
 
     async function updateBuyin(change) {
-      const fresh = await DB.get("nights", nightId);
-      const freshNp = fresh && fresh.players.find((p) => p.playerId === playerId);
-      const i = freshNp ? findBuyinIndex(freshNp.buyins, buyinIndex, buyinTs) : -1;
-      if (i < 0) {
-        closeModal();
-        toast("That buy-in was changed by someone else");
-        return refreshEvent(nightId);
-      }
-      change(freshNp.buyins, i);
-      await DB.put("nights", fresh);
+      let gone = false;
+      await mutate("nights", nightId, (fresh) => {
+        const freshNp = fresh.players.find((p) => p.playerId === playerId);
+        const i = freshNp ? findBuyinIndex(freshNp.buyins, buyinIndex, buyinTs) : -1;
+        if (i < 0) {
+          gone = true;
+          return false;
+        }
+        change(freshNp.buyins, i);
+      });
       closeModal();
+      if (gone) toast("That buy-in was changed by someone else");
       await refreshEvent(nightId);
     }
 
@@ -668,7 +724,7 @@
   }
 
   $("btn-add-player-to-night").addEventListener("click", async () => {
-    const night = await DB.get("nights", state.currentNightId);
+    const night = await DB.read("nights", state.currentNightId);
     const roster = await DB.getAll("players");
     const already = new Set((night.players || []).map((p) => p.playerId));
     const available = roster.filter((p) => !already.has(p.id) && !p.archived).sort((a, b) => a.name.localeCompare(b.name));
@@ -730,8 +786,11 @@
         if (how === "reconnected") note = `${player.name} reconnected to past results`;
       }
 
-      toAdd.forEach((p) => freshNight.players.push({ playerId: p.id, name: p.name, buyins: [], cashOut: null, net: null }));
-      await DB.put("nights", freshNight);
+      await mutate("nights", state.currentNightId, (n) => {
+        n.players = n.players || [];
+        const have = new Set(n.players.map((p) => p.playerId));
+        toAdd.filter((p) => !have.has(p.id)).forEach((p) => n.players.push({ playerId: p.id, name: p.name, buyins: [], cashOut: null, net: null }));
+      });
       closeModal();
       await refreshEvent(state.currentNightId);
       if (note) toast(note);
@@ -739,7 +798,7 @@
   });
 
   $("btn-edit-event").addEventListener("click", async () => {
-    const night = await DB.get("nights", state.currentNightId);
+    const night = await DB.read("nights", state.currentNightId);
     if (!night) return;
     openModal(`
       <h2>Edit event</h2>
@@ -757,6 +816,7 @@
       </div>
       ${settleSwitch(settleMode(night))}
       <div class="modal-actions">
+        <button class="btn btn-ghost btn-danger-text" id="m-delete">Delete</button>
         <button class="btn btn-ghost" id="m-cancel">Cancel</button>
         <button class="btn btn-gold" id="m-save">Save</button>
       </div>
@@ -765,31 +825,38 @@
     $("m-cancel").addEventListener("click", closeModal);
     onTap($("m-save"), async () => {
       const date = $("f-date").value;
-      if (!date) return toast("Pick a date");
-      const fresh = await DB.get("nights", state.currentNightId);
-      fresh.date = date;
-      fresh.location = $("f-location").value.trim();
-      fresh.notes = $("f-notes").value.trim();
-      fresh.settle = getSettle();
-      await DB.put("nights", fresh);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return toast("Pick a date");
+      const location = $("f-location").value.trim();
+      const notes = $("f-notes").value.trim();
+      const settle = getSettle();
+      await mutate("nights", state.currentNightId, (fresh) => {
+        Object.assign(fresh, { date, location, notes, settle });
+      });
       closeModal();
-      await refreshEvent(fresh.id);
+      await refreshEvent(state.currentNightId);
       toast("Event updated");
+    });
+    onTap($("m-delete"), async () => {
+      if (!confirm("Delete this event permanently? Buy-ins and results will be lost.")) return;
+      await DB.delete("nights", night.id, night._v); // refused if someone changed it meanwhile
+      closeModal();
+      state.currentNightId = null;
+      if (state.nightDetailReturnTo === "player-detail" && state.currentPlayerId) openPlayer(state.currentPlayerId);
+      else openTab("nights");
+      toast("Event deleted");
     });
   });
 
   onTap($("btn-close-night"), async () => {
     const night = await DB.get("nights", state.currentNightId);
+    if (!night) return;
     if (!night.players || night.players.length === 0) return toast("Add players before closing the event");
     // Someone added but never bought in didn't play: don't count them as an event played.
     const idle = night.players.filter((np) => buyinTotal(np) <= 0);
     if (idle.length === night.players.length) return toast("Add buy-ins before closing the event");
     if (idle.length) {
       const names = idle.map((np) => np.name).join(", ");
-      if (!confirm(`${names} ${idle.length === 1 ? "has" : "have"} no buy-ins and will be removed from this event. Continue?`)) return;
-      night.players = night.players.filter((np) => buyinTotal(np) > 0);
-      await DB.put("nights", night);
-      updatePotStrip();
+      if (!confirm(`${names} ${idle.length === 1 ? "has" : "have"} no buy-ins and will be removed from this event when you finish. Continue?`)) return;
     }
     showView("closeout");
     renderCloseout(night);
@@ -797,50 +864,71 @@
 
   onTap($("btn-reopen-night"), async () => {
     if (!confirm("Reopen this event? You'll be able to edit buy-ins and results again.")) return;
-    const night = await DB.get("nights", state.currentNightId);
-    night.status = "open";
-    night.closedAt = null;
-    await DB.put("nights", night);
-    await refreshEvent(night.id);
-  });
-
-  onTap($("btn-delete-night"), async () => {
-    if (!confirm("Delete this event permanently? Buy-ins and results will be lost. This can't be undone.")) return;
-    await DB.delete("nights", state.currentNightId);
-    state.currentNightId = null;
-    if (state.nightDetailReturnTo === "player-detail" && state.currentPlayerId) openPlayer(state.currentPlayerId);
-    else openTab("nights");
-    toast("Event deleted");
+    await mutate("nights", state.currentNightId, (night) => {
+      night.status = "open";
+      night.closedAt = null;
+    });
+    await refreshEvent(state.currentNightId);
   });
 
   // ================= CLOSE-OUT =================
+  // Players who bought in. Anyone added but without buy-ins didn't play and
+  // is dropped when the event is finished.
+  const playing = (night) => (night.players || []).filter((np) => buyinTotal(np) > 0);
+
   function renderCloseout(night) {
+    state.closeoutNight = night;
     const wrap = $("closeout-list");
     wrap.innerHTML = "";
-    night.players.forEach((np) => {
+    playing(night).forEach((np) => {
+      const pid = Number(np.playerId);
       const row = el(`
         <div class="card closeout-row">
           <div class="card-row">
             <div class="card-title">${escapeHtml(np.name)}</div>
-            <div class="card-sub">Buy-in ${fmtMoney(buyinTotal(np))}</div>
+            <div class="card-sub" id="co-in-${pid}">Buy-in ${fmtMoney(buyinTotal(np))}</div>
           </div>
           <div class="field-row">
-            <label for="in-${np.playerId}">Cash-out</label>
-            <input type="number" inputmode="decimal" step="0.01" min="0" class="amount-input" id="in-${np.playerId}" placeholder="0.00" value="${np.cashOut != null ? escapeHtml(np.cashOut) : ""}">
-            <span class="co-net" id="net-${np.playerId}"></span>
+            <label for="in-${pid}">Cash-out</label>
+            <input type="number" inputmode="decimal" step="0.01" min="0" class="amount-input" id="in-${pid}" placeholder="0.00" value="${np.cashOut != null ? escapeHtml(np.cashOut) : ""}">
+            <span class="co-net" id="net-${pid}"></span>
           </div>
         </div>
       `);
-      row.querySelector("input").addEventListener("input", () => updateCloseoutCheck(night));
+      row.querySelector("input").addEventListener("input", () => updateCloseoutCheck(state.closeoutNight));
       wrap.appendChild(row);
     });
     updateCloseoutCheck(night);
   }
 
+  // Someone changed buy-ins while cash-outs are being typed: update the
+  // numbers without touching what was typed (re-draw only if players changed).
+  async function refreshCloseout() {
+    const night = await DB.read("nights", state.currentNightId);
+    if (!night || state.currentView !== "closeout") return;
+    const ids = (n) => playing(n).map((np) => np.playerId).join(",");
+    if (ids(night) !== ids(state.closeoutNight)) {
+      const typed = {};
+      document.querySelectorAll("#closeout-list input").forEach((i) => (typed[i.id] = i.value));
+      renderCloseout(night);
+      Object.entries(typed).forEach(([id, v]) => {
+        const i = $(id);
+        if (i) i.value = v;
+      });
+    } else {
+      state.closeoutNight = night;
+      playing(night).forEach((np) => {
+        const label = $(`co-in-${Number(np.playerId)}`);
+        if (label) label.textContent = `Buy-in ${fmtMoney(buyinTotal(np))}`;
+      });
+    }
+    updateCloseoutCheck(state.closeoutNight);
+  }
+
   function readCloseoutRows(night) {
-    return night.players.map((np) => {
+    return playing(night).map((np) => {
       const total = buyinTotal(np);
-      const input = $(`in-${np.playerId}`);
+      const input = $(`in-${Number(np.playerId)}`);
       const raw = input && input.value !== "" ? round2(parseFloat(input.value)) : null;
       const valid = raw !== null && !isNaN(raw);
       return {
@@ -897,6 +985,8 @@
 
   onTap($("btn-finish-night"), async () => {
     const night = await DB.get("nights", state.currentNightId);
+    if (!night) return;
+    night.players = playing(night); // drop anyone who never bought in
     const rows = readCloseoutRows(night);
     const negative = rows.find((r) => r.negative);
     if (negative) return toast(`Cash-out can't be negative for ${negative.name}`);
@@ -1073,7 +1163,7 @@
     const list = $("lb-list");
     list.innerHTML = "";
     rows.forEach(({ p, s }, i) => {
-      const extras = [`in ${shortMoney(s.totalBuyIn)}`, `out ${shortMoney(s.totalCashOut)}`];
+      const extras = [`${s.eventsPlayed} event${s.eventsPlayed === 1 ? "" : "s"}`, `in ${shortMoney(s.totalBuyIn)}`, `out ${shortMoney(s.totalCashOut)}`];
       if (s.biggestWin !== null) extras.push(`best ${shortMoney(s.biggestWin, true)}`);
       if (s.biggestLoss !== null) extras.push(`worst ${shortMoney(s.biggestLoss, true)}`);
       const roi = s.roi === null ? "\u2014" : fmtPct(s.roi, true);
@@ -1082,7 +1172,6 @@
           <div class="lb-grid">
             <span class="lb-rank${i < 3 ? " is-top" : ""}">${i + 1}${p.clubMember ? '<span class="club-mark" title="Club member">&#9824;</span>' : ""}</span>
             <span class="lb-name">${escapeHtml(p.name)}</span>
-            <span class="lb-num">${s.eventsPlayed}</span>
             <span class="lb-num money ${amountClass(s.net)}">${shortMoney(s.net, true)}</span>
             <span class="lb-num lb-roi ${s.roi === null || s.fewEvents ? "amount-zero" : amountClass(s.roi)}">${roi}</span>
           </div>
@@ -1125,11 +1214,10 @@
   $("pd-club").addEventListener("change", async (e) => {
     const on = e.target.checked;
     try {
-      const player = await DB.get("players", state.currentPlayerId);
-      if (!player) return;
-      player.clubMember = on;
-      await DB.put("players", player);
-      toast(on ? `${player.name} is a club member` : `${player.name} is no longer a club member`);
+      const player = await mutate("players", state.currentPlayerId, (p) => {
+        p.clubMember = on;
+      });
+      if (player) toast(on ? `${player.name} is a club member` : `${player.name} is no longer a club member`);
     } catch (err) {
       e.target.checked = !on;
       handleError(err);
@@ -1138,7 +1226,7 @@
 
   async function renderPlayerDetail(playerId) {
     const token = renderToken("playerDetail");
-    const [player, nights] = await Promise.all([DB.get("players", playerId), DB.getAll("nights")]);
+    const [player, nights] = await Promise.all([DB.read("players", playerId), DB.getAll("nights")]);
     if (isStale("playerDetail", token) || !player) return;
 
     const stats = playerStats(nights, playerId);
@@ -1188,7 +1276,7 @@
   }
 
   $("btn-edit-player-name").addEventListener("click", async () => {
-    const player = await DB.get("players", state.currentPlayerId);
+    const player = await DB.read("players", state.currentPlayerId);
     if (!player) return;
     openModal(`
       <h2>Edit name</h2>
@@ -1210,16 +1298,9 @@
       const clash = (await DB.getAll("players")).find((p) => p.id !== player.id && sameName(p.name, newName));
       if (clash) return toast(`Another player is already called ${clash.name}`);
 
-      player.name = newName;
-      await DB.put("players", player);
-      // Keep past events in sync with the new name
-      for (const night of await DB.getAll("nights")) {
-        const mine = (night.players || []).filter((np) => np.playerId === player.id && np.name !== newName);
-        if (mine.length) {
-          mine.forEach((np) => (np.name = newName));
-          await DB.put("nights", night);
-        }
-      }
+      // Player and all past events renamed together in one database transaction
+      await DB.request(() => DB.client.rpc("rename_player", { p_id: player.id, p_name: newName }));
+      await DB.refresh(["players", "nights"]);
       closeModal();
       renderPlayerDetail(player.id);
       toast("Name updated");
@@ -1295,7 +1376,7 @@
     if (isEdit) {
       onTap($("m-delete"), async () => {
         if (!confirm(`Delete the ${existing.label} chip?`)) return;
-        await DB.delete("chips", existing.id);
+        await DB.delete("chips", existing.id, existing._v);
         closeModal();
         renderChipsList();
       });
@@ -1386,7 +1467,10 @@
     }
   });
 
-  $("btn-import").addEventListener("click", () => $("import-file").click());
+  $("btn-import").addEventListener("click", () => {
+    if (window.RPC_AUTH.role !== "owner") return toast("Only the owner can import");
+    $("import-file").click();
+  });
 
   $("import-file").addEventListener("change", async (e) => {
     const file = e.target.files[0];
@@ -1602,7 +1686,7 @@
   }
 
   onTap($("btn-share-event"), async () => {
-    const night = await DB.get("nights", state.currentNightId);
+    const night = await DB.read("nights", state.currentNightId);
     if (!night) return;
     await fontsReady();
     const canvas = drawEventImage(night);
@@ -1610,7 +1694,19 @@
   });
 
   // ================= Service worker =================
+  // When a new release has been downloaded, reload into it at a safe moment:
+  // never in the middle of typing cash-outs or with a popup open.
+  let updateReady = false;
+  function reloadIfSafe() {
+    if (updateReady && state.currentView !== "closeout" && !isModalOpen()) location.reload();
+  }
   if ("serviceWorker" in navigator) {
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (!hadController) return; // first install, nothing to update
+      updateReady = true;
+      reloadIfSafe();
+    });
     window.addEventListener("load", () => {
       navigator.serviceWorker.register("sw.js").catch((err) => console.error("SW registration failed", err));
     });
@@ -1644,10 +1740,19 @@
   });
 
   // ================= Members (admins only) =================
+  function memberStatus(m) {
+    if (m.user_id) return "Active";
+    if (!m.invite_expires) return "No invite code";
+    const exp = new Date(m.invite_expires);
+    if (exp < new Date()) return "Invite code expired";
+    const iso = new Date(exp - exp.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    return `Invited &middot; code valid until ${fmtDate(iso)}`;
+  }
+
   async function renderMembers() {
     const token = renderToken("members");
     const rows = await DB.request(() =>
-      DB.client.from("members").select("email,role,user_id,created_at").order("created_at")
+      DB.client.from("members").select("email,role,user_id,created_at,invite_expires").order("created_at")
     );
     if (isStale("members", token)) return;
     const order = { owner: 0, admin: 1, viewer: 2 };
@@ -1663,7 +1768,7 @@
           <div class="card-row">
             <div>
               <div class="card-title">${escapeHtml(m.email)}</div>
-              <div class="card-sub member-sub">${self ? "You &middot; " : ""}${m.user_id ? "Active" : "Not set up yet"}</div>
+              <div class="card-sub member-sub">${self ? "You &middot; " : ""}${memberStatus(m)}</div>
             </div>
             <span class="badge${m.role === "viewer" ? " is-closed" : ""}">${ROLE_LABEL[m.role]}</span>
           </div>
@@ -1701,6 +1806,38 @@
     return () => wrap.querySelector(".is-on").dataset.role;
   }
 
+  // Shows the invite code once, with a ready-to-send message.
+  function showInvite(email, code) {
+    const link = location.origin + location.pathname;
+    const message = `Retro Poker Club\n${link}\nTap "First time here?" and use:\nEmail: ${email}\nInvite code: ${code}\n(valid for 7 days)`;
+    openModal(`
+      <h2>Invite code</h2>
+      <p class="hint-text">Send this to ${escapeHtml(email)}. It works once and expires in 7 days.</p>
+      <div class="invite-code">${escapeHtml(code)}</div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="m-close">Close</button>
+        <button class="btn btn-gold" id="m-send">Send message</button>
+      </div>
+    `);
+    $("m-close").addEventListener("click", closeModal);
+    onTap($("m-send"), async () => {
+      if (navigator.share) {
+        try {
+          await navigator.share({ text: message });
+          return;
+        } catch (err) {
+          if (err && err.name === "AbortError") return;
+        }
+      }
+      try {
+        await navigator.clipboard.writeText(message);
+        toast("Message copied");
+      } catch (_) {
+        toast("Couldn't copy — note the code down");
+      }
+    });
+  }
+
   $("btn-add-member").addEventListener("click", () => {
     openModal(`
       <h2>Add member</h2>
@@ -1720,24 +1857,26 @@
     onTap($("m-add"), async () => {
       const email = $("f-memail").value.trim().toLowerCase();
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return toast("Enter a valid email");
+      let code;
       try {
-        await DB.request(() => DB.client.from("members").insert({ email, role: getRole() }));
+        code = await DB.request(() => DB.client.rpc("invite_member", { p_email: email, p_role: getRole() }));
       } catch (err) {
-        if (err.cause && err.cause.code === "23505") return toast(`${email} is already a member`);
+        if (/already a member/i.test(err.message)) return toast(`${email} is already a member`);
         throw err;
       }
-      closeModal();
       await renderMembers();
-      toast("Added — they can now set their password in the app");
+      showInvite(email, code);
     });
   });
 
   function openMemberModal(m) {
+    const pending = !m.user_id;
     openModal(`
       <h2>${escapeHtml(m.email)}</h2>
       ${roleSwitch(m.role)}
-      ${m.user_id ? `<button class="btn btn-ghost btn-block" id="m-reset">Reset login</button>
-      <p class="hint-text">Use if they forgot their password or lost their authenticator. They then set a new password via "First time here?".</p>` : ""}
+      ${pending
+        ? `<button class="btn btn-ghost btn-block" id="m-code">New invite code</button>`
+        : `<button class="btn btn-ghost btn-block" id="m-reset">Reset login</button>`}
       <div class="modal-actions">
         <button class="btn btn-ghost btn-danger-text" id="m-remove">Remove</button>
         <button class="btn btn-ghost" id="m-cancel">Cancel</button>
@@ -1757,10 +1896,18 @@
       if (role === m.role) return closeModal();
       await run(() => DB.client.from("members").update({ role }).eq("email", m.email), `${m.email} is now ${ROLE_LABEL[role].toLowerCase()}`);
     });
-    if (m.user_id) {
+    if (pending) {
+      onTap($("m-code"), async () => {
+        const code = await DB.request(() => DB.client.rpc("invite_member", { p_email: m.email, p_role: getRole() }));
+        await renderMembers();
+        showInvite(m.email, code);
+      });
+    } else {
       onTap($("m-reset"), async () => {
-        if (!confirm(`Reset the login for ${m.email}? They'll need to set a new password.`)) return;
-        await run(() => DB.client.from("members").update({ user_id: null }).eq("email", m.email), "Login reset");
+        if (!confirm(`Reset the login for ${m.email}? They'll be signed out and need a new invite code to set a password.`)) return;
+        const code = await DB.request(() => DB.client.rpc("reset_member_login", { p_email: m.email }));
+        await renderMembers();
+        showInvite(m.email, code);
       });
     }
     onTap($("m-remove"), async () => {
@@ -1829,6 +1976,7 @@
       case "player-detail": if (state.currentPlayerId) run(renderPlayerDetail(state.currentPlayerId)); break;
       case "chips": run(renderChipsList()); break;
       case "members": run(renderMembers()); break;
+      case "closeout": run(refreshCloseout()); break;
       default: break;
     }
     if (state.currentView !== "closeout") run(updatePotStrip());
@@ -1836,11 +1984,11 @@
 
   DB.onStatus((offline) => {
     $("offline-strip").hidden = !offline;
-    if (!offline) refreshCurrentView();
   });
-  window.addEventListener("online", refreshCurrentView);
+  window.addEventListener("online", () => DB.refresh());
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && window.RPC_AUTH && window.RPC_AUTH.role) refreshCurrentView();
+    // back in the app: fetch what changed while it was in the background
+    if (document.visibilityState === "visible" && window.RPC_AUTH && window.RPC_AUTH.role) DB.refresh();
   });
   // Anything that failed outside a button handler (e.g. a list that couldn't load)
   window.addEventListener("unhandledrejection", (e) => {
@@ -1866,7 +2014,12 @@
     start() {
       openTab("nights");
       requestPersistentStorage();
-      DB.subscribe(refreshCurrentView);
+      DB.subscribe();
+      let redraw = null;
+      DB.onChanged(() => {
+        clearTimeout(redraw);
+        redraw = setTimeout(refreshCurrentView, 150);
+      });
       DB.exportAll().catch(() => {}); // load everything once so all tabs work offline
       offerLocalUpload().catch((err) => console.error(err));
     },

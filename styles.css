@@ -129,8 +129,8 @@ main#views {
 }
 
 .icon-btn {
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   display: grid;
   place-items: center;
   border-radius: 50%;
@@ -165,8 +165,9 @@ main#views {
 .view-head-title h1 { font-size: 20px; }
 
 .btn-back {
-  width: 34px;
-  height: 34px;
+  width: 44px;
+  height: 44px;
+  margin-left: -8px;
   display: grid;
   place-items: center;
   border-radius: 50%;
@@ -288,18 +289,24 @@ main#views {
 .buyin-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
   margin-top: 8px;
 }
 .buyin-chip {
-  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 34px;
+  font-size: 13px;
+  font-weight: 600;
   background: var(--bg);
   border: 1px solid var(--line);
   color: var(--ink-soft);
   border-radius: 20px;
-  padding: 3px 9px;
+  padding: 4px 12px;
   cursor: pointer;
 }
+.buyin-chip svg { opacity: 0.55; }
 .buyin-chip:active { border-color: var(--gold); color: var(--gold-deep); }
 
 .player-actions { display: flex; gap: 8px; margin-top: 10px; }
@@ -660,19 +667,19 @@ body.is-typing .tabbar { display: none; }
 .lb-top { margin-top: -6px; margin-bottom: 12px; }
 .lb-grid {
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) 40px 64px 50px;
+  grid-template-columns: 18px minmax(0, 1fr) 60px 46px;
   align-items: baseline;
-  column-gap: 8px;
+  column-gap: 6px;
 }
 .lb-head { padding: 0 15px 6px; font-size: 11.5px; font-weight: 600; color: var(--ink-soft); }
 .lb-row { padding-top: 12px; padding-bottom: 11px; }
 .lb-rank { font-size: 13px; font-weight: 700; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
 .lb-rank.is-top { color: var(--gold-deep); }
-.lb-name { font-weight: 700; font-size: 15px; color: var(--ink); overflow-wrap: anywhere; line-height: 1.3; }
+.lb-name { font-weight: 700; font-size: 14.5px; color: var(--ink); line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: -0.01em; }
 .lb-num { text-align: right; font-variant-numeric: tabular-nums; font-size: 14px; }
 .lb-row .money.lb-num { font-weight: 700; font-size: 14px; }
 .lb-roi { font-size: 13px; font-weight: 600; }
-.lb-sub { margin: 5px 0 0 28px; font-size: 12.5px; color: var(--ink-soft); line-height: 1.45; }
+.lb-sub { margin: 5px 0 0 24px; font-size: 12.5px; color: var(--ink-soft); line-height: 1.45; }
 .lb-sub span { white-space: nowrap; }
 .lb-note { margin-top: 14px; }
 .lb-toggle { margin-bottom: 14px; }
@@ -682,3 +689,35 @@ body.is-typing .tabbar { display: none; }
 .switch:disabled { opacity: 0.7; }
 .lb-rank { display: flex; flex-direction: column; align-items: flex-start; }
 .club-mark { color: var(--gold); font-size: 13px; line-height: 1; margin-top: 4px; }
+
+/* ============ Review fixes ============ */
+body:not(.is-owner) .owner-only { display: none !important; }
+.toast { display: flex; align-items: center; gap: 12px; }
+.toast[hidden] { display: none; }
+.toast-action {
+  font: inherit;
+  font-weight: 800;
+  color: var(--bg);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  padding: 6px 2px;
+  margin: -6px 0;
+}
+.invite-code {
+  font-family: var(--font-heading);
+  font-size: 34px;
+  letter-spacing: 0.25em;
+  text-align: center;
+  color: var(--gold-deep);
+  background: var(--gold-tint);
+  border: 1px solid var(--gold);
+  border-radius: var(--radius-m);
+  padding: 14px 0 12px 0.25em;
+  margin: 6px 0 4px;
+  font-variant-numeric: tabular-nums;
+  user-select: all;
+}
+@media (max-width: 379px) {
+  .lb-name { font-size: 13.5px; letter-spacing: -0.02em; }
+  .lb-grid { column-gap: 5px; }
+}
