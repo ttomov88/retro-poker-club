@@ -1049,9 +1049,9 @@
     return str.replace(/\.00$/, "");
   }
 
-  const LB_ALL_KEY = "rpc-lb-all";
-  $("lb-all").addEventListener("change", (e) => {
-    pref.set(LB_ALL_KEY, e.target.checked ? "on" : "off");
+  const LB_CLUB_KEY = "rpc-lb-club";
+  $("lb-club").addEventListener("change", (e) => {
+    pref.set(LB_CLUB_KEY, e.target.checked ? "on" : "off");
     renderLeaderboard().catch(handleError);
   });
 
@@ -1059,16 +1059,16 @@
     const token = renderToken("leaderboard");
     const [roster, nights] = await Promise.all([DB.getAll("players"), DB.getAll("nights")]);
     if (isStale("leaderboard", token)) return;
-    const showAll = pref.get(LB_ALL_KEY) === "on"; // off by default: only players with 3+ events
-    $("lb-all").checked = showAll;
+    const clubOnly = pref.get(LB_CLUB_KEY) !== "off"; // on by default: club members only
+    $("lb-club").checked = clubOnly;
     const rows = roster
       .filter((p) => !p.archived)
       .map((p) => ({ p, s: playerStats(nights, p.id) }))
-      .filter((r) => r.s.eventsPlayed > 0 && (showAll || !r.s.fewEvents))
+      .filter((r) => r.s.eventsPlayed > 0 && (!clubOnly || r.p.clubMember))
       .sort((a, b) => b.s.net - a.s.net || b.s.totalCashOut - a.s.totalCashOut || a.p.name.localeCompare(b.p.name));
 
     $("lb-empty").hidden = rows.length > 0;
-    $("lb-empty").textContent = showAll ? "No closed events yet." : "No players with 3 or more events yet.";
+    $("lb-empty").textContent = clubOnly ? "No club members yet. Mark them on each player's page." : "No closed events yet.";
     $("lb-head").hidden = rows.length === 0;
     const list = $("lb-list");
     list.innerHTML = "";
@@ -1081,7 +1081,7 @@
         <div class="card card-tappable lb-row">
           <div class="lb-grid">
             <span class="lb-rank${i < 3 ? " is-top" : ""}">${i + 1}</span>
-            <span class="lb-name">${escapeHtml(p.name)}</span>
+            <span class="lb-name">${escapeHtml(p.name)}${p.clubMember ? '&nbsp;<span class="club-mark" title="Club member">&#9824;</span>' : ""}</span>
             <span class="lb-num">${s.eventsPlayed}</span>
             <span class="lb-num money ${amountClass(s.net)}">${shortMoney(s.net, true)}</span>
             <span class="lb-num lb-roi ${s.roi === null || s.fewEvents ? "amount-zero" : amountClass(s.roi)}">${roi}</span>
@@ -1122,6 +1122,20 @@
     });
   });
 
+  $("pd-club").addEventListener("change", async (e) => {
+    const on = e.target.checked;
+    try {
+      const player = await DB.get("players", state.currentPlayerId);
+      if (!player) return;
+      player.clubMember = on;
+      await DB.put("players", player);
+      toast(on ? `${player.name} is a club member` : `${player.name} is no longer a club member`);
+    } catch (err) {
+      e.target.checked = !on;
+      handleError(err);
+    }
+  });
+
   async function renderPlayerDetail(playerId) {
     const token = renderToken("playerDetail");
     const [player, nights] = await Promise.all([DB.get("players", playerId), DB.getAll("nights")]);
@@ -1131,6 +1145,8 @@
     $("pd-name").textContent = player.name;
     $("pd-archived").hidden = !player.archived;
     $("btn-archive-player").textContent = player.archived ? "Restore to roster" : "Archive player";
+    $("pd-club").checked = !!player.clubMember;
+    $("pd-club").disabled = !canEdit();
 
     const statCards = [
       ["Events played", stats.eventsPlayed, ""],

@@ -139,9 +139,9 @@
     <!-- ---- Leaderboard ---- -->
     <section class="view" id="view-leaderboard" data-view="leaderboard">
       <div class="view-head"><h1>Leaderboard</h1></div>
-      <label class="card setting-row lb-toggle" for="lb-all">
-        <span class="card-title">Players with fewer than 3 events</span>
-        <input type="checkbox" id="lb-all" class="switch">
+      <label class="card setting-row lb-toggle" for="lb-club">
+        <span class="card-title">Club members</span>
+        <input type="checkbox" id="lb-club" class="switch">
       </label>
       <div class="lb-grid lb-head" id="lb-head">
         <span>#</span><span>Player</span><span class="lb-num">Events</span><span class="lb-num">Net</span><span class="lb-num">ROI</span>
@@ -176,6 +176,10 @@
           </button>
         </div>
       </div>
+      <label class="card setting-row pd-club" for="pd-club">
+        <span class="card-title">Club member</span>
+        <input type="checkbox" id="pd-club" class="switch">
+      </label>
       <div class="stat-grid" id="pd-stats"></div>
       <div class="section-row"><h2>Events played</h2></div>
       <div id="pd-nights" class="stack"></div>
