@@ -103,12 +103,28 @@
       try {
         await handler(e);
       } catch (err) {
-        console.error(err);
-        toast("Something went wrong \u2014 please try again");
+        handleError(err);
       } finally {
         button.disabled = false;
       }
     });
+  }
+
+  function canEdit() {
+    return !!(window.RPC_AUTH && window.RPC_AUTH.isEditor);
+  }
+
+  // One place that turns failures into a short message.
+  function handleError(err) {
+    console.error(err);
+    const kind = err && err.kind;
+    if (kind === "offline") toast("No connection \u2014 not saved. Try again when you're online");
+    else if (kind === "conflict") {
+      toast("Someone else just changed this \u2014 showing the latest");
+      closeModal();
+      refreshCurrentView();
+    } else if (kind === "denied") toast("You don't have permission to do that");
+    else toast("Something went wrong \u2014 please try again");
   }
 
   // Render guard: if a newer render of the same list started while this one
@@ -174,6 +190,9 @@
         return true;
       case "settings":
         openTab(state.settingsReturnTab);
+        return true;
+      case "members":
+        openSettings();
         return true;
       case "players":
       case "chips":
@@ -388,7 +407,7 @@
 
     players.forEach((np) => {
       const chips = (np.buyins || [])
-        .map((b, i) => `<button type="button" class="buyin-chip" data-idx="${i}">${fmtMoney(b.amount)}</button>`)
+        .map((b, i) => `<button type="button" class="buyin-chip" data-idx="${i}" data-ts="${Number(b.ts) || ""}">${fmtMoney(b.amount)}</button>`)
         .join("");
       const row = el(`
         <div class="card player-row">
@@ -397,7 +416,7 @@
             <div class="money money-strong">${fmtMoney(buyinTotal(np))}</div>
           </div>
           <div class="buyin-list">${chips}</div>
-          <div class="player-actions">
+          <div class="player-actions edit-only">
             <button class="btn btn-ghost-gold btn-sm btn-quick-buyin">+${fmtMoney(QUICK_BUYINS[0]).replace(".00", "")}</button>
             <button class="btn btn-ghost-gold btn-sm btn-add-buyin">+ Buy-in</button>
             <button class="btn btn-ghost btn-sm btn-remove-player">Remove</button>
@@ -409,7 +428,9 @@
       });
       row.querySelector(".btn-add-buyin").addEventListener("click", () => openBuyinModal(night.id, np.playerId, np.name));
       row.querySelectorAll(".buyin-chip").forEach((chipEl) => {
-        chipEl.addEventListener("click", () => openEditBuyinModal(night.id, np.playerId, Number(chipEl.dataset.idx)));
+        chipEl.addEventListener("click", () => {
+          if (canEdit()) openEditBuyinModal(night.id, np.playerId, Number(chipEl.dataset.idx), Number(chipEl.dataset.ts) || null);
+        });
       });
       onTap(row.querySelector(".btn-remove-player"), async () => {
         if (!confirm(`Remove ${np.name} from this event? Their buy-ins will be removed too.`)) return;
@@ -489,11 +510,20 @@
     });
   }
 
-  async function openEditBuyinModal(nightId, playerId, buyinIndex) {
+  // Finds the buy-in again in fresh data: by its timestamp when it has one
+  // (so a buy-in someone else removed meanwhile can't shift the index), else by position.
+  function findBuyinIndex(buyins, index, ts) {
+    if (!buyins) return -1;
+    if (ts) return buyins.findIndex((b) => Number(b.ts) === ts);
+    return buyins[index] ? index : -1;
+  }
+
+  async function openEditBuyinModal(nightId, playerId, buyinIndex, buyinTs) {
     const night = await DB.get("nights", nightId);
     const np = night && night.players.find((p) => p.playerId === playerId);
-    const buyin = np && np.buyins ? np.buyins[buyinIndex] : null;
-    if (!buyin) return;
+    const at = np ? findBuyinIndex(np.buyins, buyinIndex, buyinTs) : -1;
+    const buyin = at >= 0 ? np.buyins[at] : null;
+    if (!buyin) return refreshEvent(nightId);
 
     openModal(`
       <h2>Edit buy-in</h2>
@@ -513,9 +543,14 @@
 
     async function updateBuyin(change) {
       const fresh = await DB.get("nights", nightId);
-      const freshNp = fresh.players.find((p) => p.playerId === playerId);
-      if (!freshNp || !freshNp.buyins[buyinIndex]) return closeModal();
-      change(freshNp.buyins);
+      const freshNp = fresh && fresh.players.find((p) => p.playerId === playerId);
+      const i = freshNp ? findBuyinIndex(freshNp.buyins, buyinIndex, buyinTs) : -1;
+      if (i < 0) {
+        closeModal();
+        toast("That buy-in was changed by someone else");
+        return refreshEvent(nightId);
+      }
+      change(freshNp.buyins, i);
       await DB.put("nights", fresh);
       closeModal();
       await refreshEvent(nightId);
@@ -523,12 +558,12 @@
 
     onTap($("m-delete"), async () => {
       if (!confirm("Delete this buy-in?")) return;
-      await updateBuyin((buyins) => buyins.splice(buyinIndex, 1));
+      await updateBuyin((buyins, i) => buyins.splice(i, 1));
     });
     onTap($("m-save"), async () => {
       const amount = readAmount(input);
       if (!amount) return toast("Enter an amount above zero");
-      await updateBuyin((buyins) => (buyins[buyinIndex].amount = amount));
+      await updateBuyin((buyins, i) => (buyins[i].amount = amount));
     });
   }
 
@@ -1053,7 +1088,9 @@
         </div>
       `);
       row.querySelector(".chip-swatch").style.background = c.color; // set via DOM, never via HTML string
-      row.addEventListener("click", () => openChipModal(c));
+      row.addEventListener("click", () => {
+        if (canEdit()) openChipModal(c);
+      });
       list.appendChild(row);
     });
     $("chips-total-value").textContent = fmtMoney(totalValue);
@@ -1104,7 +1141,7 @@
       if (qtyRaw === "" || !Number.isInteger(qty) || qty < 0) return toast("Quantity must be a whole number, 0 or more");
 
       const obj = { color: $("f-color").value, label, value, qty };
-      if (isEdit) await DB.put("chips", { ...obj, id: existing.id });
+      if (isEdit) await DB.put("chips", { ...obj, id: existing.id, _v: existing._v });
       else await DB.add("chips", obj);
       closeModal();
       renderChipsList();
@@ -1114,10 +1151,27 @@
   $("btn-add-chip").addEventListener("click", () => openChipModal(null));
 
   // ================= SETTINGS / EXPORT / IMPORT =================
-  $("btn-open-settings").addEventListener("click", () => {
-    if (state.currentView !== "settings") state.settingsReturnTab = state.currentTab;
+  const ROLE_LABEL = { owner: "Owner", admin: "Admin", viewer: "Viewer" };
+
+  function openSettings() {
+    const auth = window.RPC_AUTH || {};
+    $("acct-email").textContent = auth.email || "";
+    $("acct-role").textContent = ROLE_LABEL[auth.role] || "";
+    $("two-step-sub").textContent = auth.mfaOn ? "On" : "Off \u2014 tap to set up";
+    $("btn-two-step").disabled = !!auth.mfaOn;
     updateLastBackupLabel();
     showView("settings");
+  }
+
+  $("btn-open-settings").addEventListener("click", () => {
+    if (!["settings", "members"].includes(state.currentView)) state.settingsReturnTab = state.currentTab;
+    openSettings();
+  });
+  $("btn-two-step").addEventListener("click", () => {
+    if (!window.RPC_AUTH.mfaOn) window.RPC_AUTH.setupAuthenticator();
+  });
+  $("btn-sign-out").addEventListener("click", () => {
+    if (confirm("Sign out of Retro Poker Club on this phone?")) window.RPC_AUTH.signOut();
   });
 
   function downloadJSON(data, filename) {
@@ -1156,7 +1210,6 @@
   };
   const AUTO_BACKUP_KEY = "rpc-auto-backup";
   const LAST_BACKUP_KEY = "rpc-last-backup";
-  const RESTORE_DISMISSED_KEY = "rpc-restore-dismissed";
 
   function autoBackupEnabled() {
     return pref.get(AUTO_BACKUP_KEY) !== "off";
@@ -1206,7 +1259,7 @@
     const file = e.target.files[0];
     if (!file) return;
     try {
-      if (!(await isDatabaseEmpty()) && !confirm("Replace all data on this device with this backup?")) return;
+      if (!(await isDatabaseEmpty()) && !confirm("Replace ALL club data (for everyone) with this backup?")) return;
       let data;
       try {
         data = JSON.parse(await file.text());
@@ -1217,7 +1270,8 @@
       openTab("nights");
       toast("Backup restored");
     } catch (err) {
-      alert("Couldn't import that file: " + err.message);
+      if (err && err.kind) handleError(err);
+      else alert("Couldn't import that file: " + err.message);
     } finally {
       e.target.value = "";
     }
@@ -1553,15 +1607,139 @@
     pushGuard();
   });
 
-  // ================= Data protection =================
+  // ================= Members (admins only) =================
+  async function renderMembers() {
+    const token = renderToken("members");
+    const rows = await DB.request(() =>
+      DB.client.from("members").select("email,role,user_id,created_at").order("created_at")
+    );
+    if (isStale("members", token)) return;
+    const order = { owner: 0, admin: 1, viewer: 2 };
+    rows.sort((a, b) => order[a.role] - order[b.role] || a.email.localeCompare(b.email));
+    const me = window.RPC_AUTH.userId;
+    const list = $("members-list");
+    list.innerHTML = "";
+    rows.forEach((m) => {
+      const self = m.user_id && m.user_id === me;
+      const locked = m.role === "owner" || self;
+      const card = el(`
+        <div class="card${locked ? "" : " card-tappable"}">
+          <div class="card-row">
+            <div>
+              <div class="card-title">${escapeHtml(m.email)}</div>
+              <div class="card-sub member-sub">${self ? "You &middot; " : ""}${m.user_id ? "Active" : "Not set up yet"}</div>
+            </div>
+            <span class="badge${m.role === "viewer" ? " is-closed" : ""}">${ROLE_LABEL[m.role]}</span>
+          </div>
+        </div>
+      `);
+      if (!locked) card.addEventListener("click", () => openMemberModal(m));
+      list.appendChild(card);
+    });
+  }
+
+  function openMembers() {
+    showView("members");
+    renderMembers().catch(handleError);
+  }
+  $("btn-members").addEventListener("click", openMembers);
+
+  function roleSwitch(current) {
+    return `
+      <div class="field">
+        <label>Role</label>
+        <div class="seg" id="f-role">
+          <button type="button" class="btn btn-ghost${current === "viewer" ? " is-on" : ""}" data-role="viewer">Viewer</button>
+          <button type="button" class="btn btn-ghost${current === "admin" ? " is-on" : ""}" data-role="admin">Admin</button>
+        </div>
+      </div>
+      <p class="hint-text">Viewers see events and stats. Admins can also edit everything and manage members.</p>`;
+  }
+  function bindRoleSwitch() {
+    const wrap = $("f-role");
+    wrap.querySelectorAll("button").forEach((b) =>
+      b.addEventListener("click", () => {
+        wrap.querySelectorAll("button").forEach((x) => x.classList.toggle("is-on", x === b));
+      })
+    );
+    return () => wrap.querySelector(".is-on").dataset.role;
+  }
+
+  $("btn-add-member").addEventListener("click", () => {
+    openModal(`
+      <h2>Add member</h2>
+      <div class="field">
+        <label for="f-memail">Email</label>
+        <input type="email" id="f-memail" inputmode="email" placeholder="friend@example.com">
+      </div>
+      ${roleSwitch("viewer")}
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="m-cancel">Cancel</button>
+        <button class="btn btn-gold" id="m-add">Add</button>
+      </div>
+    `);
+    const getRole = bindRoleSwitch();
+    focusField($("f-memail"));
+    $("m-cancel").addEventListener("click", closeModal);
+    onTap($("m-add"), async () => {
+      const email = $("f-memail").value.trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return toast("Enter a valid email");
+      try {
+        await DB.request(() => DB.client.from("members").insert({ email, role: getRole() }));
+      } catch (err) {
+        if (err.cause && err.cause.code === "23505") return toast(`${email} is already a member`);
+        throw err;
+      }
+      closeModal();
+      await renderMembers();
+      toast("Added — they can now set their password in the app");
+    });
+  });
+
+  function openMemberModal(m) {
+    openModal(`
+      <h2>${escapeHtml(m.email)}</h2>
+      ${roleSwitch(m.role)}
+      ${m.user_id ? `<button class="btn btn-ghost btn-block" id="m-reset">Reset login</button>
+      <p class="hint-text">Use if they forgot their password or lost their authenticator. They then set a new password via "First time here?".</p>` : ""}
+      <div class="modal-actions">
+        <button class="btn btn-ghost btn-danger-text" id="m-remove">Remove</button>
+        <button class="btn btn-ghost" id="m-cancel">Cancel</button>
+        <button class="btn btn-gold" id="m-save">Save</button>
+      </div>
+    `);
+    const getRole = bindRoleSwitch();
+    $("m-cancel").addEventListener("click", closeModal);
+    const run = async (query, message) => {
+      await DB.request(query);
+      closeModal();
+      await renderMembers();
+      toast(message);
+    };
+    onTap($("m-save"), async () => {
+      const role = getRole();
+      if (role === m.role) return closeModal();
+      await run(() => DB.client.from("members").update({ role }).eq("email", m.email), `${m.email} is now ${ROLE_LABEL[role].toLowerCase()}`);
+    });
+    if (m.user_id) {
+      onTap($("m-reset"), async () => {
+        if (!confirm(`Reset the login for ${m.email}? They'll need to set a new password.`)) return;
+        await run(() => DB.client.from("members").update({ user_id: null }).eq("email", m.email), "Login reset");
+      });
+    }
+    onTap($("m-remove"), async () => {
+      if (!confirm(`Remove ${m.email}? They won't be able to open the club any more.`)) return;
+      await run(() => DB.client.from("members").delete().eq("email", m.email), "Member removed");
+    });
+  }
+
+  // ================= Data helpers =================
   async function isDatabaseEmpty() {
     const data = await DB.exportAll();
     return !data.players.length && !data.nights.length && !data.chips.length;
   }
 
-  // Ask Chrome to treat this app's storage as persistent, so it isn't
-  // silently evicted when the phone runs low on space. (A manual
-  // "Clear browsing data" still removes it — hence the restore prompt below.)
+  // Keep this phone's copy of the data from being evicted when space runs low.
   async function requestPersistentStorage() {
     try {
       if (navigator.storage && navigator.storage.persist && !(await navigator.storage.persisted())) {
@@ -1570,34 +1748,80 @@
     } catch (_) {}
   }
 
-  // Empty app (fresh install or Chrome data was cleared): offer a one-tap
-  // restore from the backup file in Downloads.
-  async function offerRestoreIfEmpty() {
-    if (!(await isDatabaseEmpty()) || pref.get(RESTORE_DISMISSED_KEY) === "1") return;
+  // First start after the move to the cloud: an admin whose phone still has
+  // the data of the old offline-only version gets a one-tap upload.
+  const UPLOAD_DONE_KEY = "rpc-local-uploaded";
+  async function offerLocalUpload() {
+    if (!canEdit() || pref.get(UPLOAD_DONE_KEY) === "1") return;
+    let local;
+    try {
+      local = await LegacyDB.readAll();
+    } catch (_) {
+      return;
+    }
+    if (!local || (!local.nights.length && !local.players.length && !local.chips.length)) return;
+    if (!(await isDatabaseEmpty())) return;
+    const n = local.nights.length, p = local.players.length;
     openModal(`
-      <h2>No data found</h2>
-      <p class="hint-text">Restore from a backup file? Auto-backups are in your Downloads folder.</p>
+      <h2>Move your data to the cloud</h2>
+      <p class="hint-text">This phone has ${n} event${n === 1 ? "" : "s"} and ${p} player${p === 1 ? "" : "s"} from the offline version. Upload them so everyone in the club can see them?</p>
       <div class="modal-actions">
-        <button class="btn btn-ghost" id="m-cancel">Start fresh</button>
-        <button class="btn btn-gold" id="m-restore">Restore</button>
+        <button class="btn btn-ghost" id="m-cancel">Not now</button>
+        <button class="btn btn-gold" id="m-upload">Upload</button>
       </div>
     `);
-    $("m-cancel").addEventListener("click", () => {
-      pref.set(RESTORE_DISMISSED_KEY, "1");
+    $("m-cancel").addEventListener("click", closeModal);
+    onTap($("m-upload"), async () => {
+      downloadJSON({ app: "retro-poker-club", version: 2, exportedAt: new Date().toISOString(), ...local }, backupFilename());
+      await DB.importAll(local);
+      pref.set(UPLOAD_DONE_KEY, "1");
       closeModal();
-    });
-    $("m-restore").addEventListener("click", () => {
-      closeModal();
-      $("import-file").click();
+      refreshCurrentView();
+      toast("Data uploaded — a backup file was also saved");
     });
   }
 
-  // ================= Init =================
-  async function init() {
-    await openDB();
-    openTab("nights");
-    requestPersistentStorage();
-    offerRestoreIfEmpty();
+  // ================= Keeping screens current =================
+  // Re-draws whatever is on screen. Skips the close-out screen so typed
+  // cash-outs are never wiped by someone else's change.
+  function refreshCurrentView() {
+    const run = (p) => Promise.resolve(p).catch(handleError);
+    switch (state.currentView) {
+      case "nights": run(renderNightsList()); break;
+      case "night-detail": if (state.currentNightId) run(renderNightDetail(state.currentNightId)); break;
+      case "players": run(renderPlayersList()); break;
+      case "player-detail": if (state.currentPlayerId) run(renderPlayerDetail(state.currentPlayerId)); break;
+      case "chips": run(renderChipsList()); break;
+      case "members": run(renderMembers()); break;
+      default: break;
+    }
+    if (state.currentView !== "closeout") run(updatePotStrip());
   }
-  init();
+
+  DB.onStatus((offline) => {
+    $("offline-strip").hidden = !offline;
+    if (!offline) refreshCurrentView();
+  });
+  window.addEventListener("online", refreshCurrentView);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && window.RPC_AUTH && window.RPC_AUTH.role) refreshCurrentView();
+  });
+  // Anything that failed outside a button handler (e.g. a list that couldn't load)
+  window.addEventListener("unhandledrejection", (e) => {
+    if (e.reason && e.reason.name === "DbError") {
+      e.preventDefault();
+      if (e.reason.kind !== "offline" || !DB.offline) handleError(e.reason);
+    }
+  });
+
+  // ================= Start (called after sign-in) =================
+  window.RPC_APP = {
+    start() {
+      openTab("nights");
+      requestPersistentStorage();
+      DB.subscribe(refreshCurrentView);
+      offerLocalUpload().catch((err) => console.error(err));
+    },
+    refresh: refreshCurrentView,
+  };
 })();

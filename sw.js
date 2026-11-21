@@ -3,7 +3,7 @@
    answered within NETWORK_TIMEOUT_MS the cached copy is served instead, so a
    weak signal at the table doesn't leave you staring at a blank screen. */
 
-const CACHE_VERSION = "rpc-v9";
+const CACHE_VERSION = "rpc-v10";
 const NETWORK_TIMEOUT_MS = 3000;
 const PRECACHE_URLS = [
   "./",
@@ -11,6 +11,8 @@ const PRECACHE_URLS = [
   "./styles.css",
   "./app.js",
   "./db.js",
+  "./auth.js",
+  "./vendor/supabase.js",
   "./manifest.json",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
@@ -45,6 +47,9 @@ function fromCache(request) {
 self.addEventListener("fetch", (event) => {
   const request = event.request;
   if (request.method !== "GET") return;
+  // Club data and sign-in go straight to Supabase: never cached or delayed here
+  // (the app keeps its own offline copy of the data).
+  if (new URL(request.url).hostname.endsWith(".supabase.co")) return;
 
   const network = fetch(request);
 

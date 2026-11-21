@@ -1,21 +1,29 @@
 # Retro Poker Club
 
-A personal-use, offline-first PWA for tracking private poker events: buy-ins (with rebuys), per-player results, all-time player stats, and a chip reference sheet. No backend, no server — everything lives in IndexedDB on your phone.
+A small PWA for tracking private poker events: buy-ins (with rebuys), per-player results, all-time player stats, and a chip reference sheet. The app is hosted on GitHub Pages; the club data lives in a shared Supabase database so friends can follow along.
 
-## Deploy to GitHub Pages
+## How it works
 
-1. Create a new repo, e.g. `retro-poker-club`, under your GitHub account.
-2. Push all files in this folder to the repo root (`index.html`, `styles.css`, `app.js`, `db.js`, `sw.js`, `manifest.json`, `icons/`).
-3. In the repo settings, enable **GitHub Pages** from the `main` branch, root folder.
-4. Visit `https://<your-username>.github.io/retro-poker-club/` — it should load and be installable (Chrome menu → "Add to Home screen" / "Install app").
+- **Hosting:** GitHub Pages serves the app (this repo). Every push to `main` goes live in about a minute.
+- **Data:** Supabase (project `retro-poker-club`, Frankfurt). Events, players and chips are stored as JSON documents with a version number, so two admins editing the same event at once can't overwrite each other.
+- **Sign-in:** email + password. Admins and the owner also enter a code from Google Authenticator. Viewers can turn that on in Settings.
+- **Roles:**
+  - **Owner:** full access; can't be demoted or removed by anyone.
+  - **Admin:** edits everything and manages members.
+  - **Viewer:** sees events and stats only.
+
+  The database enforces these rules itself (row-level security), not just the buttons.
+- **Joining:** an admin adds the email in Settings → Members. The person opens the app, taps *First time here? Set your password*, and signs in. Only listed emails can create a login.
+- **Forgot password / lost phone:** an admin taps the member → *Reset login*, and the person sets a new password the same way.
+- **Offline:** the last loaded data stays on the phone, so the app opens and shows everything without a signal. Saving needs a connection.
+- **Live updates:** changes by other members appear automatically.
+- **Keep-alive:** `.github/workflows/keep-alive.yml` pings the database daily, because free Supabase projects pause after 7 days without activity.
 
 ## Data & backups
 
-- All data is stored locally on your phone (IndexedDB). Nothing is sent anywhere.
-- Auto-backup (on by default, toggle in Backup): a JSON file is saved to your Downloads folder every time you close an event.
-- The app asks Chrome for persistent storage, so the data isn't evicted when the phone runs low on space.
-- Clearing Chrome's "Cookies and site data" still wipes the app's data. If the app opens empty, it offers a one-tap restore from your latest backup file in Downloads.
-- Safe way to clear Chrome: in Delete browsing data → Advanced, untick "Cookies and site data".
+- Export backup (Settings) downloads all club data as a JSON file. Auto-backup (admins) does this whenever you close an event.
+- Import backup (admins) replaces all club data with a file, in one transaction: if the file is bad, nothing changes.
+- On the first start after the move to the cloud, an admin whose phone still has data from the old offline-only version gets a one-tap upload.
 
 ## Notes
 
