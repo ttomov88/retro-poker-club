@@ -309,17 +309,14 @@ main#views {
 .closeout-row .field-row label { font-size: 13px; color: var(--ink-soft); width: 72px; flex-shrink: 0; }
 .closeout-row input { flex: 1; min-width: 0; width: 100%; }
 
-/* Running cash-out counter: pinned above the tab bar while you type */
+/* Running cash-out counter: sits at the end of the list (not pinned, so it
+   never covers the players while the keyboard is open) */
 .closeout-check {
-  position: sticky;
-  bottom: calc(var(--tabbar-h, 60px) + 8px);
-  z-index: 15;
   margin-top: 16px;
   padding: 12px 14px;
   border-radius: var(--radius-m);
   background: var(--surface);
   border: 1px solid var(--line);
-  box-shadow: 0 4px 16px rgba(27, 28, 25, 0.10);
   color: var(--ink-soft);
   font-size: 14px;
 }
@@ -532,7 +529,6 @@ button:disabled { opacity: 0.55; pointer-events: none; }
 .btn-icon { display: inline-flex; align-items: center; gap: 6px; }
 
 /* on the close-out screen, show messages above the pinned counter */
-body[data-view="closeout"] .toast { bottom: calc(var(--tabbar-h, 60px) + 112px); }
 
 /* ROI / win rate */
 .stat-note { font-size: 12px; font-weight: 500; color: var(--ink-soft); }
