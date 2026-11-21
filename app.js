@@ -1130,7 +1130,7 @@
       ["Total cash-out", fmtMoney(stats.totalCashOut), ""],
       ["Biggest win", stats.biggestWin === null ? "\u2014" : fmtSigned(stats.biggestWin), "amount-pos"],
       ["Biggest loss", stats.biggestLoss === null ? "\u2014" : fmtSigned(stats.biggestLoss), "amount-neg"],
-      ["ROI (return on investment)",
+      ["ROI",
         fmtPct(stats.roi, true) + (stats.fewEvents && stats.roi !== null ? ' <span class="stat-note">few events</span>' : ""),
         stats.roi === null || stats.fewEvents ? "amount-zero" : amountClass(stats.roi)],
       ["Win rate",
