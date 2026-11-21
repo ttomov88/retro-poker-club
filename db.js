@@ -149,7 +149,10 @@ async function fetchAll(store) {
 }
 
 // ---------- background refresh (show saved data instantly, update when the network answers) ----------
-const fresh = { inflight: {}, at: {}, listeners: [] };
+const fresh = { inflight: {}, at: {}, listeners: [], localAt: {} };
+// Remember when this phone last changed a store, so an older server answer
+// that was already on its way can't overwrite a newer local change.
+const touched = (store) => (fresh.localAt[store] = Date.now());
 const REVALIDATE_GAP_MS = 3000;
 
 function emitChanged(store) {
@@ -165,8 +168,10 @@ function emitChanged(store) {
 function revalidate(store, force) {
   if (fresh.inflight[store]) return fresh.inflight[store];
   if (!force && Date.now() - (fresh.at[store] || 0) < REVALIDATE_GAP_MS) return Promise.resolve();
+  const startedAt = Date.now();
   fresh.inflight[store] = fetchAll(store)
     .then((rows) => {
+      if ((fresh.localAt[store] || 0) >= startedAt) return; // a local change happened meanwhile: this answer is stale
       fresh.at[store] = Date.now();
       const before = JSON.stringify(cache.read(store));
       cache.write(store, rows);
@@ -227,6 +232,11 @@ const DB = {
   onChanged(fn) {
     fresh.listeners.push(fn);
   },
+  // Shows a change on this phone right away, before the server has confirmed it.
+  setLocal(store, obj) {
+    touched(store);
+    cache.upsert(store, clone(obj));
+  },
   refresh(stores) {
     return Promise.all((stores || STORES).map((s) => revalidate(s, true)));
   },
@@ -251,6 +261,7 @@ const DB = {
 
   async add(store, obj) {
     const row = await request(() => sb.from(store).insert({ data: toData(obj) }).select("id,data,version").single());
+    touched(store);
     cache.upsert(store, toObj(row));
     return Number(row.id);
   },
@@ -264,6 +275,7 @@ const DB = {
       if (obj.id != null) payload.id = obj.id;
       const row = await request(() => sb.from(store).upsert(payload).select("id,data,version").single());
       Object.assign(obj, { id: Number(row.id), _v: row.version });
+      touched(store);
       cache.upsert(store, toObj(row));
       return Number(row.id);
     }
@@ -274,6 +286,7 @@ const DB = {
       throw new DbError("conflict", "Someone else changed this at the same time");
     }
     obj._v = rows[0].version; // so the same object can be saved again
+    touched(store);
     cache.upsert(store, toObj(rows[0]));
     return Number(rows[0].id);
   },
@@ -288,6 +301,7 @@ const DB = {
     if (version != null && !rows.length) {
       throw new DbError("conflict", "Someone else changed this at the same time");
     }
+    touched(store);
     cache.remove(store, id);
   },
 

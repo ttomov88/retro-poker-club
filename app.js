@@ -98,6 +98,30 @@
     toast._h = setTimeout(() => (t.hidden = true), action ? 5000 : 2400);
   }
 
+  // Like mutate, but the change shows on screen immediately and is saved in the
+  // background: no waiting for the server on a weak signal. If saving fails,
+  // `undo` takes the change back off the screen and the error is shown.
+  // Both functions must be safe to run twice (they may be re-applied on a retry).
+  async function mutateOptimistic(store, id, change, undo) {
+    const local = await DB.read(store, id); // the saved copy, no waiting
+    if (!local || change(local) === false) return null;
+    DB.setLocal(store, local);
+    const saving = (async () => {
+      try {
+        await DB.put(store, local); // one round trip when nothing else changed
+      } catch (err) {
+        if (err.kind === "conflict") {
+          await mutate(store, id, change); // someone else saved first: re-apply on fresh data
+          return;
+        }
+        const cur = await DB.read(store, id);
+        if (cur && undo(cur) !== false) DB.setLocal(store, cur);
+        throw err;
+      }
+    })();
+    return { saving };
+  }
+
   // Read-modify-save on one record, retried if someone else saved it at the
   // same moment (so a buy-in tapped by two admins at once is never lost).
   // `change` edits the object in place; returning false cancels the save.
@@ -566,7 +590,8 @@
       `);
       onTap(row.querySelector(".btn-quick-buyin"), async () => {
         const ts = await addBuyin(night.id, np.playerId, QUICK_BUYINS[0]);
-        if (ts) toast(`${fmtMoney(QUICK_BUYINS[0])} added for ${np.name}`, { label: "Undo", run: () => removeBuyin(night.id, np.playerId, ts) });
+        if (ts) toast(`${fmtMoney(QUICK_BUYINS[0])} added for ${np.name}`, { label: "Undo", run: () => removeBuyin(night.id, np.playerId, ts, QUICK_BUYINS[0]) });
+        await new Promise((r) => setTimeout(r, 500)); // guard against an accidental double tap
       });
       row.querySelector(".btn-add-buyin").addEventListener("click", () => openBuyinModal(night.id, np.playerId, np.name));
       row.querySelectorAll(".buyin-chip").forEach((chipEl) => {
@@ -605,28 +630,48 @@
 
   const QUICK_BUYINS = [20, 40];
 
-  // Returns the new buy-in's timestamp (its id), or null.
-  async function addBuyin(nightId, playerId, amount) {
-    const ts = Date.now();
-    const saved = await mutate("nights", nightId, (night) => {
-      const np = night.players.find((p) => p.playerId === playerId);
+  // Buy-in changes by timestamp (each buy-in's id). Safe to apply twice.
+  function pushBuyin(playerId, amount, ts) {
+    return (night) => {
+      const np = (night.players || []).find((p) => p.playerId === playerId);
       if (!np) return false;
       np.buyins = np.buyins || [];
+      if (np.buyins.some((b) => Number(b.ts) === ts)) return false;
       np.buyins.push({ amount, ts });
-    });
-    await refreshEvent(nightId);
-    return saved ? ts : null;
+    };
   }
-
-  async function removeBuyin(nightId, playerId, ts) {
-    await mutate("nights", nightId, (night) => {
-      const np = night.players.find((p) => p.playerId === playerId);
+  function dropBuyin(playerId, ts) {
+    return (night) => {
+      const np = (night.players || []).find((p) => p.playerId === playerId);
       const i = np ? (np.buyins || []).findIndex((b) => Number(b.ts) === ts) : -1;
       if (i < 0) return false;
       np.buyins.splice(i, 1);
-    });
+    };
+  }
+
+  // Shows the change right away; saving happens in the background.
+  async function optimisticNight(nightId, change, undo) {
+    const r = await mutateOptimistic("nights", nightId, change, undo);
+    if (!r) return false;
     await refreshEvent(nightId);
-    toast("Buy-in removed");
+    r.saving
+      .then(() => refreshEvent(nightId))
+      .catch((err) => {
+        refreshEvent(nightId);
+        handleError(err);
+      });
+    return true;
+  }
+
+  // Returns the new buy-in's timestamp (its id), or null.
+  async function addBuyin(nightId, playerId, amount) {
+    const ts = Date.now();
+    const ok = await optimisticNight(nightId, pushBuyin(playerId, amount, ts), dropBuyin(playerId, ts));
+    return ok ? ts : null;
+  }
+
+  async function removeBuyin(nightId, playerId, ts, amount) {
+    if (await optimisticNight(nightId, dropBuyin(playerId, ts), pushBuyin(playerId, amount, ts))) toast("Buy-in removed");
   }
 
   function readAmount(input) {

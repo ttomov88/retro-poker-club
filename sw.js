@@ -7,7 +7,7 @@
    Bump CACHE_VERSION with every release. Club data never goes through here
    (Supabase requests are left alone); the app keeps its own offline copy. */
 
-const CACHE_VERSION = "rpc-v21";
+const CACHE_VERSION = "rpc-v22";
 const APP_FILES = [
   "./",
   "./index.html",

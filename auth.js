@@ -361,7 +361,57 @@
     }
   });
 
+  // Opening the app: if this phone is already signed in and knows its role,
+  // start straight away and confirm with the server in the background.
+  const SESSION_KEY = `sb-${new URL(SUPABASE_URL).hostname.split(".")[0]}-auth-token`;
+  function peekSession() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(SESSION_KEY) || "null");
+      const s = saved && (saved.access_token ? saved : saved.currentSession);
+      if (!s || !s.access_token || !s.user) return null;
+      const part = s.access_token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+      const claims = JSON.parse(atob(part));
+      return { userId: s.user.id, email: s.user.email || "", aal: claims.aal || "aal1" };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async function verifyInBackground() {
+    try {
+      const { data } = await sb.auth.getSession();
+      const session = data && data.session;
+      if (!session) {
+        store.set(ROLE_KEY, null);
+        return location.reload();
+      }
+      const { data: m, error } = await sb.from("members").select("role").eq("user_id", session.user.id).maybeSingle();
+      if (error) return; // offline: keep the role this phone knows
+      const role = m ? m.role : null;
+      if (role !== AUTH.role) {
+        store.set(ROLE_KEY, role);
+        if (!role) return showNoAccess(AUTH.email);
+        return location.reload(); // role changed: start again with the new one
+      }
+      const { data: aal } = await sb.auth.mfa.getAuthenticatorAssuranceLevel();
+      AUTH.mfaOn = !!(aal && aal.nextLevel === "aal2");
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
   async function boot() {
+    const peek = peekSession();
+    const role = store.get(ROLE_KEY);
+    if (peek && role) {
+      const editorRole = role === "owner" || role === "admin";
+      if (!editorRole || peek.aal === "aal2") {
+        Object.assign(AUTH, { userId: peek.userId, email: peek.email, role, mfaOn: peek.aal === "aal2" });
+        startApp(editorRole && peek.aal === "aal2");
+        verifyInBackground();
+        return;
+      }
+    }
     try {
       const { data } = await sb.auth.getSession();
       if (!data || !data.session) return showLogin();
