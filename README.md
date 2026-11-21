@@ -20,7 +20,9 @@ A personal-use, offline-first PWA for tracking private poker events: buy-ins (wi
 ## Notes
 
 - Buy-ins are entered directly in euros; the Chips tab is a reference sheet only (denomination → euro value, and how many of each you own) and doesn't affect calculations.
-- An event can be reopened after closing, in case you need to fix a mistake.
+- An event can be reopened after closing, in case you need to fix a mistake. Date, location and notes can be edited anytime (pencil next to the title).
+- Players added to an event without any buy-in are removed when you close it (after a confirmation), so they don't count as having played.
+- Back gesture: steps back one screen; on the Events screen, press back twice within 2 seconds to close the app.
 - Tap the logo/name in the header from anywhere to jump back to the Events list.
 - Players are archived, never deleted: archived players are hidden from new events but keep their stats. Adding the same name again restores them.
 - Share: closed events have a Share button (results image), and the Players screen has Share (all-time stats image incl. ROI and win rate, sorted by net result). Images open Android's share sheet, or download if sharing isn't available.

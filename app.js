@@ -603,9 +603,56 @@
     });
   });
 
+  $("btn-edit-event").addEventListener("click", async () => {
+    const night = await DB.get("nights", state.currentNightId);
+    if (!night) return;
+    openModal(`
+      <h2>Edit event</h2>
+      <div class="field">
+        <label for="f-date">Date</label>
+        <input type="date" id="f-date" value="${escapeHtml(night.date)}">
+      </div>
+      <div class="field">
+        <label for="f-location">Location <span class="muted">(optional)</span></label>
+        <input type="text" id="f-location" value="${escapeHtml(night.location || "")}">
+      </div>
+      <div class="field">
+        <label for="f-notes">Notes <span class="muted">(optional)</span></label>
+        <input type="text" id="f-notes" value="${escapeHtml(night.notes || "")}">
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="m-cancel">Cancel</button>
+        <button class="btn btn-gold" id="m-save">Save</button>
+      </div>
+    `);
+    $("m-cancel").addEventListener("click", closeModal);
+    onTap($("m-save"), async () => {
+      const date = $("f-date").value;
+      if (!date) return toast("Pick a date");
+      const fresh = await DB.get("nights", state.currentNightId);
+      fresh.date = date;
+      fresh.location = $("f-location").value.trim();
+      fresh.notes = $("f-notes").value.trim();
+      await DB.put("nights", fresh);
+      closeModal();
+      await refreshEvent(fresh.id);
+      toast("Event updated");
+    });
+  });
+
   onTap($("btn-close-night"), async () => {
     const night = await DB.get("nights", state.currentNightId);
     if (!night.players || night.players.length === 0) return toast("Add players before closing the event");
+    // Someone added but never bought in didn't play: don't count them as an event played.
+    const idle = night.players.filter((np) => buyinTotal(np) <= 0);
+    if (idle.length === night.players.length) return toast("Add buy-ins before closing the event");
+    if (idle.length) {
+      const names = idle.map((np) => np.name).join(", ");
+      if (!confirm(`${names} ${idle.length === 1 ? "has" : "have"} no buy-ins and will be removed from this event. Continue?`)) return;
+      night.players = night.players.filter((np) => buyinTotal(np) > 0);
+      await DB.put("nights", night);
+      updatePotStrip();
+    }
     showView("closeout");
     renderCloseout(night);
   });
@@ -1480,20 +1527,30 @@
   }
 
   // ================= Android back gesture =================
-  // Back closes an open popup, otherwise steps back one screen; only on the
-  // Events home screen does it ask before leaving the app.
-  // (Swiping the app away in the task switcher can't be intercepted by any web app.)
-  history.pushState({ rpcGuard: true }, "", location.href);
+  // Back closes an open popup, otherwise steps back one screen. On the Events
+  // home screen the first back shows "Press back again to close"; a second
+  // back within 2 seconds leaves the app (there is no guard entry left, so
+  // Android closes it). A web app can't close itself any other way, and
+  // swiping it away in the task switcher can't be intercepted at all.
+  const EXIT_WINDOW_MS = 2000;
+  let exitTimer = null;
+  function pushGuard() {
+    history.pushState({ rpcGuard: true }, "", location.href);
+  }
+  pushGuard();
   window.addEventListener("popstate", () => {
+    if (exitTimer) return; // second back while armed: let it go (app closes)
     if (isModalOpen()) {
       closeModal();
     } else if (!goBack()) {
-      if (confirm("Close Retro Poker Club?")) {
-        history.back();
-        return;
-      }
+      toast("Press back again to close");
+      exitTimer = setTimeout(() => {
+        exitTimer = null;
+        pushGuard();
+      }, EXIT_WINDOW_MS);
+      return;
     }
-    history.pushState({ rpcGuard: true }, "", location.href);
+    pushGuard();
   });
 
   // ================= Data protection =================

@@ -3,7 +3,7 @@
    answered within NETWORK_TIMEOUT_MS the cached copy is served instead, so a
    weak signal at the table doesn't leave you staring at a blank screen. */
 
-const CACHE_VERSION = "rpc-v8";
+const CACHE_VERSION = "rpc-v9";
 const NETWORK_TIMEOUT_MS = 3000;
 const PRECACHE_URLS = [
   "./",
@@ -46,14 +46,21 @@ self.addEventListener("fetch", (event) => {
   const request = event.request;
   if (request.method !== "GET") return;
 
-  const network = fetch(request).then((response) => {
-    // Cache only good responses (no 404/500 pages, no opaque responses).
-    if (response && response.ok) {
-      const copy = response.clone();
-      event.waitUntil(caches.open(CACHE_VERSION).then((cache) => cache.put(request, copy)));
-    }
-    return response;
-  });
+  const network = fetch(request);
+
+  // Refresh the cache with good responses (no 404/500 pages, no opaque
+  // responses). Registered up front so it still completes when the cached
+  // copy was already served after the timeout.
+  event.waitUntil(
+    network
+      .then((response) => {
+        if (response && response.ok) {
+          const copy = response.clone();
+          return caches.open(CACHE_VERSION).then((cache) => cache.put(request, copy));
+        }
+      })
+      .catch(() => {})
+  );
 
   event.respondWith(
     new Promise((resolve) => {
