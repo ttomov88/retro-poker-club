@@ -652,3 +652,6 @@ body[data-role="viewer"] .chip-row:active { background: var(--surface); }
 .payment-row.is-paid .pay-who,
 .payment-row.is-paid .money { color: var(--ink-soft); text-decoration: line-through; text-decoration-color: var(--line); }
 .payments-hint { margin-top: 10px; }
+
+/* keyboard open: give the screen to the content */
+body.is-typing .tabbar { display: none; }

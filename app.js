@@ -1894,6 +1894,17 @@
     }
   });
 
+  // While typing (keyboard open), hide the tab bar so more of the screen is visible.
+  document.addEventListener("focusin", (e) => {
+    if (e.target.matches("input:not([type=checkbox]):not([type=file]), textarea")) document.body.classList.add("is-typing");
+  });
+  document.addEventListener("focusout", () => {
+    setTimeout(() => {
+      const a = document.activeElement;
+      if (!a || !a.matches("input, textarea")) document.body.classList.remove("is-typing");
+    }, 50);
+  });
+
   // ================= Start (called after sign-in) =================
   window.RPC_APP = {
     start() {
