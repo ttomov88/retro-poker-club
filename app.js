@@ -15,7 +15,7 @@
   };
 
   const EUR = "\u20AC";
-  const TAB_ROOTS = ["nights", "players", "chips"];
+  const TAB_ROOTS = ["nights", "leaderboard", "players", "chips"];
 
   // ================= Helpers =================
   const $ = (id) => document.getElementById(id);
@@ -156,6 +156,7 @@
     showView(tab);
     if (tab === "nights") renderNightsList();
     if (tab === "players") renderPlayersList();
+    if (tab === "leaderboard") renderLeaderboard();
     if (tab === "chips") renderChipsList();
   }
 
@@ -166,8 +167,9 @@
     renderNightDetail(nightId);
   }
 
-  function openPlayer(playerId) {
+  function openPlayer(playerId, returnTab) {
     state.currentPlayerId = playerId;
+    if (returnTab) state.playerReturnTab = returnTab;
     showView("player-detail");
     renderPlayerDetail(playerId);
   }
@@ -185,7 +187,7 @@
         openEvent(state.currentNightId, state.nightDetailReturnTo);
         return true;
       case "player-detail":
-        openTab("players");
+        openTab(state.playerReturnTab || "players");
         return true;
       case "settings":
         openTab(state.settingsReturnTab);
@@ -194,6 +196,7 @@
         openSettings();
         return true;
       case "players":
+      case "leaderboard":
       case "chips":
         openTab("nights");
         return true;
@@ -1032,8 +1035,56 @@
           </div>
         </div>
       `);
-      card.addEventListener("click", () => openPlayer(p.id));
+      card.addEventListener("click", () => openPlayer(p.id, "players"));
       list.appendChild(card);
+    });
+  }
+
+  // ================= LEADERBOARD =================
+  // All-time ranking by net result. Active players with at least one closed
+  // event; full details live on each player's page (tap a row).
+  // Short money for the leaderboard: €385 instead of €385.00 (cents kept when there are any)
+  function shortMoney(n, signed) {
+    const str = signed ? fmtSigned(n) : fmtMoney(n);
+    return str.replace(/\.00$/, "");
+  }
+
+  async function renderLeaderboard() {
+    const token = renderToken("leaderboard");
+    const [roster, nights] = await Promise.all([DB.getAll("players"), DB.getAll("nights")]);
+    if (isStale("leaderboard", token)) return;
+    const closed = nights.filter((n) => n.status === "closed").length;
+    const rows = roster
+      .filter((p) => !p.archived)
+      .map((p) => ({ p, s: playerStats(nights, p.id) }))
+      .filter((r) => r.s.eventsPlayed > 0)
+      .sort((a, b) => b.s.net - a.s.net || b.s.totalCashOut - a.s.totalCashOut || a.p.name.localeCompare(b.p.name));
+
+    $("lb-sub").textContent = closed ? `${closed} event${closed === 1 ? "" : "s"} \u00B7 sorted by net result` : "";
+    $("lb-empty").hidden = rows.length > 0;
+    $("lb-head").hidden = rows.length === 0;
+    $("lb-note").hidden = rows.length === 0;
+    const list = $("lb-list");
+    list.innerHTML = "";
+    rows.forEach(({ p, s }, i) => {
+      const extras = [`in ${shortMoney(s.totalBuyIn)}`, `out ${shortMoney(s.totalCashOut)}`];
+      if (s.biggestWin !== null) extras.push(`best ${shortMoney(s.biggestWin, true)}`);
+      if (s.biggestLoss !== null) extras.push(`worst ${shortMoney(s.biggestLoss, true)}`);
+      const roi = s.roi === null ? "\u2014" : fmtPct(s.roi, true) + (s.fewEvents ? "*" : "");
+      const row = el(`
+        <div class="card card-tappable lb-row">
+          <div class="lb-grid">
+            <span class="lb-rank${i < 3 ? " is-top" : ""}">${i + 1}</span>
+            <span class="lb-name">${escapeHtml(p.name)}</span>
+            <span class="lb-num">${s.eventsPlayed}</span>
+            <span class="lb-num money ${amountClass(s.net)}">${shortMoney(s.net, true)}</span>
+            <span class="lb-num lb-roi ${s.roi === null || s.fewEvents ? "amount-zero" : amountClass(s.roi)}">${roi}</span>
+          </div>
+          <div class="lb-sub">${extras.map((x) => `<span>${x}</span>`).join(" \u00B7 ")}</div>
+        </div>
+      `);
+      row.addEventListener("click", () => openPlayer(p.id, "leaderboard"));
+      list.appendChild(row);
     });
   }
 
@@ -1536,124 +1587,6 @@
     await shareCanvas(canvas, `poker-${night.date}-${slug(night.location)}.png`, `Poker — ${fmtDate(night.date)}`);
   });
 
-  // ---- All-time player stats ----
-  function drawStatsImage(rows, eventCount) {
-    const c = palette();
-    const PAD = 28, ROW = 44;
-    // Column order: who → how often → money in → money out → extremes → bottom line (sort key)
-    const cols = [
-      { key: "rank", label: "#", w: 30, align: "left" },
-      { key: "name", label: "Player", w: 170, align: "left" },
-      { key: "events", label: "Events", w: 64, align: "right" },
-      { key: "totalBuyIn", label: "Total buy-in", w: 104, align: "right", money: true },
-      { key: "avgBuyIn", label: "Avg buy-in", w: 96, align: "right", money: true },
-      { key: "totalCashOut", label: "Total cash-out", w: 124, align: "right", money: true },
-      { key: "avgCashOut", label: "Avg cash-out", w: 104, align: "right", money: true },
-      { key: "biggestWin", label: "Biggest win", w: 100, align: "right", signed: true },
-      { key: "biggestLoss", label: "Biggest loss", w: 100, align: "right", signed: true },
-      { key: "net", label: "Net ▾", w: 108, align: "right", signed: true, strong: true, sort: true },
-      { key: "roi", label: "ROI", w: 80, align: "right", pct: true },
-      { key: "winRate", label: "Win rate", w: 118, align: "right", pct: true },
-    ];
-    const tableW = cols.reduce((s, col) => s + col.w, 0) + 24;
-    const W = tableW + PAD * 2;
-    const listTop = 150;
-    const notes = [
-      ["ROI (return on investment)", "net result \u00F7 total buy-in: how much a player wins or loses per euro bought in."],
-      ["Win rate", "share of events a player finished in profit."],
-    ];
-    if (rows.some((r) => r.fewEvents)) notes.push(["*", `fewer than ${MIN_EVENTS_FOR_RATES} events, too few to be reliable.`]);
-    const NOTE_LINE = 20;
-    const H = listTop + 40 + rows.length * ROW + 34 + notes.length * NOTE_LINE + 30;
-    const { canvas, ctx } = makeCanvas(W, H);
-
-    ctx.fillStyle = c.bg;
-    ctx.fillRect(0, 0, W, H);
-    drawBrand(ctx, c, W, PAD, fmtDate(todayISO()));
-    text(ctx, "All-time player stats", PAD, 94, { font: `600 26px ${SERIF}`, color: c.ink });
-    text(ctx, `${rows.length} players · ${eventCount} event${eventCount === 1 ? "" : "s"}`, PAD, 124, { font: `14px ${SANS}`, color: c.soft });
-
-    // column x positions (left edge / right edge for right-aligned)
-    let x = PAD + 12;
-    cols.forEach((col) => {
-      col.x = col.align === "right" ? x + col.w - 8 : x;
-      x += col.w;
-    });
-
-    const headY = listTop + 18;
-    cols.forEach((col) => {
-      text(ctx, col.label, col.x, headY, { font: `600 12px ${SANS}`, color: col.sort ? c.goldDeep : c.soft, align: col.align });
-    });
-
-    rows.forEach((r, i) => {
-      const y = listTop + 40 + i * ROW;
-      if (i % 2 === 0) {
-        roundRect(ctx, PAD, y, tableW, ROW, 8);
-        ctx.fillStyle = c.surface;
-        ctx.fill();
-      }
-      const mid = y + ROW / 2;
-      cols.forEach((col) => {
-        const v = r[col.key];
-        let str, color = c.soft, font = `15px ${SANS}`;
-        if (col.key === "rank") str = String(i + 1);
-        else if (col.key === "name") { str = v; color = c.ink; font = `700 16px ${SANS}`; }
-        else if (col.key === "events") { str = String(v); color = c.ink; }
-        else if (col.key === "roi") {
-          str = fmtPct(v, true) + (r.fewEvents && v !== null ? "*" : "");
-          color = v === null || r.fewEvents ? c.soft : netColor(c, v);
-        } else if (col.key === "winRate") {
-          str = v === null ? "\u2014" : `${fmtPct(v)} (${r.eventsWon}/${r.events})` + (r.fewEvents ? "*" : "");
-          color = r.fewEvents ? c.soft : c.ink;
-        } else if (col.signed) { str = v === null ? "—" : fmtSigned(v); color = v === null ? c.soft : netColor(c, v); }
-        else str = fmtMoney(v);
-        if (col.strong) font = `700 16px ${SANS}`;
-        text(ctx, str, col.x, mid, { font, color, align: col.align, max: col.key === "name" ? col.w - 12 : undefined });
-      });
-    });
-
-    // short explanation under the table
-    let ny = listTop + 40 + rows.length * ROW + 30;
-    notes.forEach(([term, def]) => {
-      text(ctx, term, PAD, ny, { font: `700 13px ${SANS}`, color: c.ink });
-      const tw = ctx.measureText(term).width;
-      text(ctx, " \u2014 " + def.replace(/^\u2014 /, ""), PAD + tw, ny, { font: `13px ${SANS}`, color: c.soft });
-      ny += NOTE_LINE;
-    });
-    text(ctx, "Archived players not shown", PAD, ny + 4, { font: `12px ${SANS}`, color: c.soft });
-    return canvas;
-  }
-
-  onTap($("btn-share-players"), async () => {
-    const [roster, nights] = await Promise.all([DB.getAll("players"), DB.getAll("nights")]);
-    const rows = roster
-      .filter((p) => !p.archived)
-      .map((p) => {
-        const s = playerStats(nights, p.id);
-        return {
-          name: p.name,
-          events: s.eventsPlayed,
-          totalBuyIn: s.totalBuyIn,
-          avgBuyIn: s.eventsPlayed ? round2(s.totalBuyIn / s.eventsPlayed) : 0,
-          totalCashOut: s.totalCashOut,
-          avgCashOut: s.eventsPlayed ? round2(s.totalCashOut / s.eventsPlayed) : 0,
-          biggestWin: s.biggestWin,
-          biggestLoss: s.biggestLoss,
-          roi: s.roi,
-          winRate: s.winRate,
-          eventsWon: s.eventsWon,
-          fewEvents: s.fewEvents,
-          net: s.net,
-        };
-      })
-      .filter((r) => r.events > 0)
-      .sort((a, b) => b.net - a.net || b.totalCashOut - a.totalCashOut || a.name.localeCompare(b.name));
-    if (!rows.length) return toast("No closed events yet — nothing to share");
-    await fontsReady();
-    const eventCount = nights.filter((n) => n.status === "closed").length;
-    await shareCanvas(drawStatsImage(rows, eventCount), `poker-stats-${todayISO()}.png`, "Poker — all-time stats");
-  });
-
   // ================= Service worker =================
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
@@ -1870,6 +1803,7 @@
       case "nights": run(renderNightsList()); break;
       case "night-detail": if (state.currentNightId) run(renderNightDetail(state.currentNightId)); break;
       case "players": run(renderPlayersList()); break;
+      case "leaderboard": run(renderLeaderboard()); break;
       case "player-detail": if (state.currentPlayerId) run(renderPlayerDetail(state.currentPlayerId)); break;
       case "chips": run(renderChipsList()); break;
       case "members": run(renderMembers()); break;

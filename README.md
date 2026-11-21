@@ -33,6 +33,8 @@ A small PWA for tracking private poker events: buy-ins (with rebuys), per-player
 - Back gesture: steps back one screen; on the Events screen, press back twice within 2 seconds to close the app.
 - Tap the logo/name in the header from anywhere to jump back to the Events list.
 - Players are archived, never deleted: archived players are hidden from new events but keep their stats. Adding the same name again restores them.
-- Share: closed events have a Share button (results image), and the Players screen has Share (all-time stats image incl. ROI and win rate, sorted by net result). Images open Android's share sheet, or download if sharing isn't available.
+- Leaderboard tab: all-time ranking by net result (events, net, ROI, plus buy-in/cash-out/best/worst per player); tap a player for full stats.
+- Share: closed events have a Share button (results image, incl. who pays whom for "Pay each other" events).
+- Each event is either "Cash on the table" or "Pay each other"; the latter shows the fewest payments to settle up, with paid ticks.
 - Close-out shows a live counter (cashed out / total buy-ins) and each player's result as you type.
 - Quick buy-ins: +€20 on each player row, and €20 / €40 buttons in the Add buy-in popup.
