@@ -721,3 +721,19 @@ body:not(.is-owner) .owner-only { display: none !important; }
   .lb-name { font-size: 13.5px; letter-spacing: -0.02em; }
   .lb-grid { column-gap: 5px; }
 }
+
+/* Date field: dd.mm.yyyy text + calendar button (native picker hidden behind it) */
+.date-field { position: relative; display: flex; gap: 8px; align-items: stretch; }
+.date-field #f-date-text { flex: 1; min-width: 0; font-variant-numeric: tabular-nums; }
+.date-pick {
+  flex: none;
+  width: 48px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  color: var(--gold-deep);
+  cursor: pointer;
+}
+.date-native { position: absolute; right: 0; bottom: 0; width: 48px; height: 1px; opacity: 0; pointer-events: none; border: 0; padding: 0; }

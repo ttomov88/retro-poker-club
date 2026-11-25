@@ -49,6 +49,49 @@
     return m ? `${m[3]}.${m[2]}.${m[1]}` : ""; // anything else is not a date: show nothing
   }
 
+  // Date field shown as dd.mm.yyyy whatever the phone's language. The real
+  // value (yyyy-mm-dd) lives in a hidden native picker with id `f-date`,
+  // which the calendar button opens.
+  function dateField(iso) {
+    return `
+      <div class="date-field">
+        <input type="text" id="f-date-text" inputmode="numeric" autocomplete="off" maxlength="10" placeholder="dd.mm.yyyy" value="${escapeHtml(fmtDate(iso))}">
+        <button type="button" class="date-pick" id="f-date-pick" aria-label="Pick a date">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 9.5h17M8 3v4M16 3v4"/></svg>
+        </button>
+        <input type="date" id="f-date" class="date-native" value="${escapeHtml(iso)}" tabindex="-1" aria-hidden="true">
+      </div>`;
+  }
+  function parseDate(text) {
+    const m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(String(text).trim());
+    if (!m) return "";
+    const [d, mo, y] = [Number(m[1]), Number(m[2]), Number(m[3])];
+    const dt = new Date(Date.UTC(y, mo - 1, d));
+    if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return "";
+    return dt.toISOString().slice(0, 10);
+  }
+  function bindDateField() {
+    const text = $("f-date-text");
+    const native = $("f-date");
+    $("f-date-pick").addEventListener("click", () => {
+      try {
+        native.showPicker();
+      } catch (_) {
+        native.focus();
+        native.click();
+      }
+    });
+    native.addEventListener("change", () => {
+      if (native.value) text.value = fmtDate(native.value);
+    });
+    text.addEventListener("input", () => {
+      // add the dots while typing: 21112026 -> 21.11.2026
+      const digits = text.value.replace(/\D/g, "").slice(0, 8);
+      text.value = [digits.slice(0, 2), digits.slice(2, 4), digits.slice(4)].filter(Boolean).join(".");
+      native.value = parseDate(text.value);
+    });
+  }
+
   function todayISO() {
     const d = new Date();
     return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
@@ -448,8 +491,8 @@
     openModal(`
       <h2>New Event</h2>
       <div class="field">
-        <label for="f-date">Date</label>
-        <input type="date" id="f-date" value="${todayISO()}">
+        <label for="f-date-text">Date</label>
+        ${dateField(todayISO())}
       </div>
       <div class="field">
         <label for="f-location">Location <span class="muted">(optional)</span></label>
@@ -466,10 +509,12 @@
       </div>
     `);
     const getSettle = bindSettleSwitch();
+    bindDateField();
     $("m-cancel").addEventListener("click", closeModal);
     onTap($("m-create"), async () => {
+      if (!$("f-date").value) return toast("Enter the date as dd.mm.yyyy");
       const id = await DB.add("nights", {
-        date: $("f-date").value || todayISO(),
+        date: $("f-date").value,
         location: $("f-location").value.trim(),
         notes: $("f-notes").value.trim(),
         settle: getSettle(),
@@ -848,8 +893,8 @@
     openModal(`
       <h2>Edit event</h2>
       <div class="field">
-        <label for="f-date">Date</label>
-        <input type="date" id="f-date" value="${escapeHtml(night.date)}">
+        <label for="f-date-text">Date</label>
+        ${dateField(night.date)}
       </div>
       <div class="field">
         <label for="f-location">Location <span class="muted">(optional)</span></label>
@@ -867,10 +912,11 @@
       </div>
     `);
     const getSettle = bindSettleSwitch();
+    bindDateField();
     $("m-cancel").addEventListener("click", closeModal);
     onTap($("m-save"), async () => {
       const date = $("f-date").value;
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return toast("Pick a date");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return toast("Enter the date as dd.mm.yyyy");
       const location = $("f-location").value.trim();
       const notes = $("f-notes").value.trim();
       const settle = getSettle();
