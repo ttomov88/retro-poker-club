@@ -104,7 +104,7 @@
         <button class="btn btn-gold btn-block" id="a-go" type="submit">Sign in</button>
       </form>
       <button class="auth-link" id="a-first">First time here? Set your password</button>
-      <p class="auth-note">Forgot your password? Ask an admin to reset your login.</p>
+      <button class="auth-link" id="a-forgot">Forgot password?</button>
     `);
     busy($("a-go"), async () => {
       const email = $("a-email").value.trim().toLowerCase();
@@ -116,9 +116,60 @@
       await afterSignIn();
     });
     $("a-first").addEventListener("click", () => showClaim($("a-email").value.trim()));
+    $("a-forgot").addEventListener("click", () => showForgot($("a-email").value.trim()));
   }
 
   // ---------- First time: set a password for an invited email ----------
+  // ---------- Forgot password: email + Google Authenticator code ----------
+  function showForgot(prefillEmail) {
+    show(`
+      <h1 class="auth-title">New password</h1>
+      <p class="auth-note">Enter your email and the current code from Google Authenticator. No authenticator set up? Ask an admin to reset your login.</p>
+      <form class="auth-form">
+        <div class="field">
+          <label for="f-email">Email</label>
+          <input type="email" id="f-email" autocomplete="username" inputmode="email" value="${esc(prefillEmail)}">
+        </div>
+        <div class="field">
+          <label for="f-code">Authenticator code</label>
+          <input type="text" id="f-code" class="code-input" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000">
+        </div>
+        <div class="field">
+          <label for="f-pass">New password <span class="muted">(8+ characters)</span></label>
+          <input type="password" id="f-pass" autocomplete="new-password">
+        </div>
+        <div class="field">
+          <label for="f-pass2">Repeat password</label>
+          <input type="password" id="f-pass2" autocomplete="new-password">
+        </div>
+        <p class="auth-error" id="auth-error" hidden></p>
+        <button class="btn btn-gold btn-block" id="f-go" type="submit">Change password</button>
+      </form>
+      <button class="auth-link" id="f-back">Back to sign in</button>
+    `);
+    busy($("f-go"), async () => {
+      const email = $("f-email").value.trim().toLowerCase();
+      const code = $("f-code").value.replace(/\D/g, "");
+      const password = $("f-pass").value;
+      if (!email) return setError("Enter your email.");
+      if (code.length !== 6) return setError("Enter the 6-digit code from Google Authenticator.");
+      if (password.length < 8) return setError("Password must be at least 8 characters.");
+      if (password !== $("f-pass2").value) return setError("The passwords don't match.");
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/reset-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: SUPABASE_KEY },
+        body: JSON.stringify({ email, code, password }),
+      });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok) return setError(out.error || "Couldn't change the password. Try again.");
+      const { error } = await sb.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+      store.set(EMAIL_KEY, email);
+      await afterSignIn(); // asks for a fresh authenticator code as usual
+    });
+    $("f-back").addEventListener("click", () => showLogin($("f-email").value.trim()));
+  }
+
   function showClaim(prefillEmail) {
     show(`
       <h1 class="auth-title">Set your password</h1>

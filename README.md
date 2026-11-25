@@ -14,7 +14,8 @@ A small PWA for tracking private poker events: buy-ins (with rebuys), per-player
 
   The database enforces these rules itself (row-level security), not just the buttons.
 - **Joining:** an admin adds the email in Settings → Members and gets a 6-digit **invite code** (valid 7 days, 5 tries) to send along with the link. The person opens the app, taps *First time here? Set your password*, and enters email + code + a new password. Without the code nobody can claim an invite.
-- **Forgot password / lost phone:** an admin taps the member → *Reset login*: the old login is deleted (signed out everywhere) and a new invite code is shown. The owner's login can't be reset from the app.
+- **Forgot password:** on the sign-in screen, *Forgot password?* → email + current Google Authenticator code + new password (5 wrong codes lock it for 15 minutes; all phones are signed out). Without an authenticator, ask an admin.
+- **Lost phone / no authenticator:** an admin taps the member → *Reset login*: the old login is deleted (signed out everywhere) and a new invite code is shown. The owner's login can't be reset from the app.
 - **Offline / weak signal:** screens show the saved copy instantly and update in the background when the network answers. Saving needs a connection. If two admins save the same event at the same moment, the app retries automatically, so nothing is lost.
 - **Live updates:** changes by other members appear automatically.
 - **Keep-alive:** `.github/workflows/keep-alive.yml` pings the database daily, because free Supabase projects pause after 7 days without activity.
