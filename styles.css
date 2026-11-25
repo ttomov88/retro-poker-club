@@ -160,9 +160,12 @@ main#views {
 }
 .view-head h1 { font-size: 22px; }
 
-.view-head-back { justify-content: flex-start; gap: 10px; }
-.view-head-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.view-head-title h1 { font-size: 20px; }
+.view-head-back { justify-content: flex-start; gap: 6px; }
+/* back arrow | title (wraps onto two lines if long) | badge | pencil — all on one row */
+.view-head-title { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
+.view-head-title h1 { font-size: 19px; line-height: 1.25; flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.view-head-title .badge { flex: none; }
+.view-head-title .icon-btn { flex: none; margin: -6px -8px -6px auto; }
 
 .btn-back {
   width: 44px;
